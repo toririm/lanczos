@@ -1,0 +1,5 @@
+*.o
+*.out
+
+wf.txt
+wf-mini.txt
