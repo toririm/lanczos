@@ -3,30 +3,34 @@
 #include <string.h>
 #include <math.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include "coo.h"
 #include "util.h"
 
 void parse_to_coo(char *src_line, Coo *dist) {
 	int row, column;
 	double value;
-	char *tok, *endptr;
+	char *cur, *endptr;
+	cur = src_line;
 
-	tok = strtok(src_line, " ");
-	row = (int)strtol(tok, &endptr, 10);
-	if (endptr == tok || *endptr != '\0') {
-		fprintf(stderr, "Error: Invalid integer %s\n", tok);
+	while (isspace(*cur)) cur++;
+	row = (int)strtol(cur, &endptr, 10);
+	if (endptr == cur) {
+		fprintf(stderr, "Error: Invalid integer %s\n", cur);
 		exit(EXIT_FAILURE);
 	}
+	cur = endptr;
 	
-	tok = strtok(NULL, " ");
-	column = (int)strtol(tok, &endptr, 10);
-	if (endptr == tok || *endptr != '\0') {
-		fprintf(stderr, "Error: Invalid integer %s\n", tok);
+	while (isspace(*cur)) cur++;
+	column = (int)strtol(cur, &endptr, 10);
+	if (endptr == cur) {
+		fprintf(stderr, "Error: Invalid integer %s\n", cur);
 		exit(EXIT_FAILURE);
 	}
+	cur = endptr;
 
-	tok = strtok(NULL, " ");
-	sscanf(tok, "%lg", &value);
+	while (isspace(*cur)) cur++;
+	sscanf(cur, "%lg", &value);
 
 	// fortran は 1-index, c は 0-index
 	dist->index_row = row - 1;
@@ -67,6 +71,7 @@ Mat_Coo read_mat_coo(char *filepath) {
 	entries = malloc(sizeof(Coo) * line_count);
 	);
 
+	#pragma omp parallel for
 	for (int i = 0; i < line_count; i++) {
 		parse_to_coo(lines[i], &entries[i]);
 	}
