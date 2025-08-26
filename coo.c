@@ -35,53 +35,54 @@ void parse_to_coo(char *src_line, Coo *dist) {
 }
 
 Mat_Coo read_mat_coo(char *filepath) {
-	Coo *entries, *tmp;
-	int length = 0;
+	Coo *entries;
 	int mat_dim = 0;
 	
-	int allocated_length = 0;
-
-	char *file_content, *line_head, *cur;
+	char **lines, *line, *file_content;
+	int allocated_lines = 0;
+	int line_count = 0;
 
 	MEASURE(readfile,
 		file_content = read_from_file(filepath);
 	);
-
-	entries = NULL;
-	line_head = file_content;
-	cur = file_content;
-
-	while (*cur != '\0') {
-		if (allocated_length <= length) {
-			allocated_length += BUFSIZ;
-			tmp = realloc(entries, sizeof(Coo) * allocated_length);
-			if (tmp == NULL) {
+	
+	MEASURE(count_line,
+	lines = NULL;
+	line = strtok(file_content, "\n");
+	while (line) {
+		if (allocated_lines <= line_count) {
+			allocated_lines += BUFSIZ;
+			lines = realloc(lines, sizeof(char *) * allocated_lines);
+			if (lines == NULL) {
 				fprintf(stderr, "realloc failed\n");
-				free(entries);
+				free(file_content);
 				exit(EXIT_FAILURE);
 			}
-			entries = tmp;
 		}
-
-		while (*cur != '\0' && *cur != '\n') cur++;
-		*cur = '\0';
-		
-		parse_to_coo(line_head, &entries[length]);
-		length++;
-
-		line_head = cur + 1;
-		cur = line_head;
+		lines[line_count] = line;
+		line = strtok(NULL, "\n");
+		line_count++;
 	}
-	free(file_content);
 
-	for (int i = 0; i < length; i++) {
+	entries = malloc(sizeof(Coo) * line_count);
+	);
+
+	for (int i = 0; i < line_count; i++) {
+		parse_to_coo(lines[i], &entries[i]);
+	}
+
+	free(file_content);
+	free(lines);
+
+	
+	for (int i = 0; i < line_count; i++) {
 		mat_dim = MAX(mat_dim, entries[i].index_row);
 		mat_dim = MAX(mat_dim, entries[i].index_column);
 	}
 	// 0-index to size
 	mat_dim++;
 
-	Mat_Coo ret = { entries, length, mat_dim };
+	Mat_Coo ret = { entries, line_count, mat_dim };
 	return ret;
 }
 
