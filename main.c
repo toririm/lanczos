@@ -12,7 +12,7 @@ int main(int argc, char *argv[]) {
 	char *filename;
 	Mat_Coo mat;
 	double eigenvalues[buf_size];
-	double *eigenvectors[buf_size];\
+	double *eigenvectors[buf_size];
 
 	if (argc != 2) {
 		fprintf(stderr, "Usage: %s <input_file>\n", argv[0]);
