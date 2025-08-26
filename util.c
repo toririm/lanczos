@@ -5,6 +5,43 @@
 #include <mkl_lapacke.h>
 #include "util.h"
 
+char *read_from_file(char *filepath) {
+  FILE *fp;
+  char *head;
+  size_t read_bytes, total_bytes = 0;
+
+  fp = fopen(filepath, "r");
+  if (fp == NULL) {
+    perror("fopen");
+    exit(EXIT_FAILURE);
+  }
+
+  head = NULL;
+
+  read_bytes = -1;
+  while (read_bytes != 0) {
+    head = realloc(head, total_bytes + BUFSIZ + 1);
+    if (head == NULL) {
+      fprintf(stderr, "realloc failed\n");
+      free(head);
+      fclose(fp);
+      exit(EXIT_FAILURE);
+    }
+
+    read_bytes = fread(head + total_bytes, sizeof(char), BUFSIZ, fp);
+    if (ferror(fp)) {
+      perror("fread");
+      free(head);
+      fclose(fp);
+      exit(EXIT_FAILURE);
+    }
+    total_bytes += read_bytes;
+  }
+  head[total_bytes] = '\0';
+
+  return head;
+}
+
 void gaussian_random_vec(int n, double *r) {
   int iseed[4];
   srand((unsigned int)time(NULL));

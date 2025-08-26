@@ -1,33 +1,36 @@
-#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdbool.h>
+#include <ctype.h>
 #include "coo.h"
 #include "util.h"
 
-void parse_to_coo(char *src_str, Coo *dist) {
+void parse_to_coo(char *src_line, Coo *dist) {
 	int row, column;
 	double value;
-	char *tok, *endptr;
+	char *cur, *endptr;
+	cur = src_line;
 
-	tok = strtok(src_str, " ");
-	row = (int)strtol(tok, &endptr, 10);
-	if (endptr == tok || *endptr != '\0') {
-		fprintf(stderr, "Error: Invalid integer %s\n", tok);
+	while (isspace(*cur)) cur++;
+	row = (int)strtol(cur, &endptr, 10);
+	if (endptr == cur) {
+		fprintf(stderr, "Error: Invalid integer %s\n", cur);
 		exit(EXIT_FAILURE);
 	}
+	cur = endptr;
 	
-	tok = strtok(NULL, " ");
-	column = (int)strtol(tok, &endptr, 10);
-	if (endptr == tok || *endptr != '\0') {
-		fprintf(stderr, "Error: Invalid integer %s\n", tok);
+	while (isspace(*cur)) cur++;
+	column = (int)strtol(cur, &endptr, 10);
+	if (endptr == cur) {
+		fprintf(stderr, "Error: Invalid integer %s\n", cur);
 		exit(EXIT_FAILURE);
 	}
+	cur = endptr;
 
-	tok = strtok(NULL, " ");
-	sscanf(tok, "%lg", &value);
+	while (isspace(*cur)) cur++;
+	sscanf(cur, "%lg", &value);
 
 	// fortran は 1-index, c は 0-index
 	dist->index_row = row - 1;
@@ -36,58 +39,55 @@ void parse_to_coo(char *src_str, Coo *dist) {
 }
 
 Mat_Coo read_mat_coo(char *filepath) {
-	FILE *fp;
-	char *line = NULL;
-	size_t len;
-	int read;
-
-	const int buf_size = 1000;
-	int entry_size = buf_size;
-	int index = 0;
+	Coo *entries;
 	int mat_dim = 0;
-	Coo *entries, *tmp;
 	
-	entries = calloc(entry_size, sizeof(Coo));
-	if (entries == NULL) {
-		fprintf(stderr, "calloc failed\n");
-		exit(1);
-	}
+	char **lines, *line, *file_content;
+	int allocated_lines = 0;
+	int line_count = 0;
 
-	fp = fopen(filepath, "r");
-	if (fp == NULL) {
-		perror("fopen");
-		exit(EXIT_FAILURE);
-	}
-
+	MEASURE(readfile,
+		file_content = read_from_file(filepath);
+	);
 	
-	while ((read = getline(&line, &len, fp)) != -1) {
-		if (index >= entry_size) {
-			entry_size += buf_size;
-			tmp = realloc(entries, sizeof(Coo) * entry_size);
-			if (tmp == NULL) {
+	MEASURE(count_line,
+	lines = NULL;
+	line = strtok(file_content, "\n");
+	while (line) {
+		if (allocated_lines <= line_count) {
+			allocated_lines += BUFSIZ;
+			lines = realloc(lines, sizeof(char *) * allocated_lines);
+			if (lines == NULL) {
 				fprintf(stderr, "realloc failed\n");
-				free(entries);
-				exit(1);
+				free(file_content);
+				exit(EXIT_FAILURE);
 			}
-			entries = tmp;
 		}
-		
-		parse_to_coo(line, &entries[index]);
-		
-		index++;
+		lines[line_count] = line;
+		line = strtok(NULL, "\n");
+		line_count++;
 	}
-	
-	fclose(fp);
-	free(line);
 
-	for (int i = 0; i < index; i++) {
-		mat_dim = max(mat_dim, entries[i].index_row);
-		mat_dim = max(mat_dim, entries[i].index_column);
+	entries = malloc(sizeof(Coo) * line_count);
+	);
+
+	#pragma omp parallel for
+	for (int i = 0; i < line_count; i++) {
+		parse_to_coo(lines[i], &entries[i]);
+	}
+
+	free(file_content);
+	free(lines);
+
+	
+	for (int i = 0; i < line_count; i++) {
+		mat_dim = MAX(mat_dim, entries[i].index_row);
+		mat_dim = MAX(mat_dim, entries[i].index_column);
 	}
 	// 0-index to size
 	mat_dim++;
 
-	Mat_Coo ret = { entries, index, mat_dim };
+	Mat_Coo ret = { entries, line_count, mat_dim };
 	return ret;
 }
 
