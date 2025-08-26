@@ -1,6 +1,6 @@
 CC			= icx
 CFLAGS		= -std=c11 -Wall -O3
-LDFLAGS 	= -lmkl_rt
+LDFLAGS 	= -lmkl_rt -qopenmp
 SRCS		= $(wildcard *.c)
 OBJS		= $(SRCS:.c=.o)
 

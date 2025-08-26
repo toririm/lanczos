@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/time.h>
+#include <omp.h>
 #include "main.h"
 #include "coo.h"
 #include "util.h"
@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
 	double eigenvalues[buf_size];
 	double *eigenvectors[buf_size];
 
-	struct timeval st, en;
+	double start_time, end_time;
 
 	if (argc != 2) {
 		fprintf(stderr, "Usage: %s <input_file>\n", argv[0]);
@@ -22,18 +22,21 @@ int main(int argc, char *argv[]) {
 	}
 	filename = argv[1];
 
+	start_time = omp_get_wtime();
 	mat = read_mat_coo(filename);
-	
+	end_time = omp_get_wtime();
+	printf("[TIME] read_mat_coo elapsed time: %.6f sec\n", end_time - start_time);
+
 	printf("mat dim: %d\n", mat.dimension);
 	
 	for (int i = 0; i < number_of_eigenvalues; i++) {
 		eigenvectors[i] = calloc(mat.dimension, sizeof(double));
 	}
 	
-	gettimeofday(&st, NULL);
+	start_time = omp_get_wtime();
 	lanczos(&mat, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
-	gettimeofday(&en, NULL);
-	printf("elapsed time: %.6f sec\n", (double)(en.tv_sec - st.tv_sec) + (double)(en.tv_usec - st.tv_usec) * 1.0e-6);
+	end_time = omp_get_wtime();
+	printf("[TIME] lanczos elapsed time: %.6f sec\n", end_time - start_time);
 
 	for (int i = 0; i < number_of_eigenvalues; i++) {
 		printf("eigenvalue\t\t%d\t%.12f\n", i + 1, eigenvalues[i]);
