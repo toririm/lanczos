@@ -1,4 +1,3 @@
-#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,12 +6,12 @@
 #include "coo.h"
 #include "util.h"
 
-void parse_to_coo(char *src_str, Coo *dist) {
+void parse_to_coo(char *src_line, Coo *dist) {
 	int row, column;
 	double value;
 	char *tok, *endptr;
 
-	tok = strtok(src_str, " ");
+	tok = strtok(src_line, " ");
 	row = (int)strtol(tok, &endptr, 10);
 	if (endptr == tok || *endptr != '\0') {
 		fprintf(stderr, "Error: Invalid integer %s\n", tok);
@@ -36,58 +35,53 @@ void parse_to_coo(char *src_str, Coo *dist) {
 }
 
 Mat_Coo read_mat_coo(char *filepath) {
-	FILE *fp;
-	char *line = NULL;
-	size_t len;
-	int read;
-
-	const int buf_size = 1000;
-	int entry_size = buf_size;
-	int index = 0;
-	int mat_dim = 0;
 	Coo *entries, *tmp;
+	int length = 0;
+	int mat_dim = 0;
 	
-	entries = calloc(entry_size, sizeof(Coo));
-	if (entries == NULL) {
-		fprintf(stderr, "calloc failed\n");
-		exit(1);
-	}
+	int allocated_length = 0;
 
-	fp = fopen(filepath, "r");
-	if (fp == NULL) {
-		perror("fopen");
-		exit(EXIT_FAILURE);
-	}
+	char *file_content, *line_head, *cur;
 
-	
-	while ((read = getline(&line, &len, fp)) != -1) {
-		if (index >= entry_size) {
-			entry_size += buf_size;
-			tmp = realloc(entries, sizeof(Coo) * entry_size);
+	MEASURE(readfile,
+		file_content = read_from_file(filepath);
+	);
+
+	entries = NULL;
+	line_head = file_content;
+	cur = file_content;
+
+	while (*cur != '\0') {
+		if (allocated_length <= length) {
+			allocated_length += BUFSIZ;
+			tmp = realloc(entries, sizeof(Coo) * allocated_length);
 			if (tmp == NULL) {
 				fprintf(stderr, "realloc failed\n");
 				free(entries);
-				exit(1);
+				exit(EXIT_FAILURE);
 			}
 			entries = tmp;
 		}
-		
-		parse_to_coo(line, &entries[index]);
-		
-		index++;
-	}
-	
-	fclose(fp);
-	free(line);
 
-	for (int i = 0; i < index; i++) {
-		mat_dim = max(mat_dim, entries[i].index_row);
-		mat_dim = max(mat_dim, entries[i].index_column);
+		while (*cur != '\0' && *cur != '\n') cur++;
+		*cur = '\0';
+		
+		parse_to_coo(line_head, &entries[length]);
+		length++;
+
+		line_head = cur + 1;
+		cur = line_head;
+	}
+	free(file_content);
+
+	for (int i = 0; i < length; i++) {
+		mat_dim = MAX(mat_dim, entries[i].index_row);
+		mat_dim = MAX(mat_dim, entries[i].index_column);
 	}
 	// 0-index to size
 	mat_dim++;
 
-	Mat_Coo ret = { entries, index, mat_dim };
+	Mat_Coo ret = { entries, length, mat_dim };
 	return ret;
 }
 
