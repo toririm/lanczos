@@ -1,5 +1,6 @@
 CC			= icx
-CFLAGS		= -std=c11 -Wall -llapack -O3 -mtune=native -march=native
+CFLAGS		= -std=c11 -Wall -O3
+LDFLAGS 	= -lmkl_rt
 SRCS		= $(wildcard *.c)
 OBJS		= $(SRCS:.c=.o)
 
@@ -8,7 +9,7 @@ all: main.out
 %.o: %.h
 
 main.out: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f main.out *.o
