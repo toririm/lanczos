@@ -4,6 +4,7 @@
 #include "main.h"
 #include "coo.h"
 #include "util.h"
+#include "lanczos.h"
 
 #define number_of_eigenvalues 5
 #define buf_size 1000
@@ -32,7 +33,7 @@ int main(int argc, char *argv[]) {
 	}
 	
 	MEASURE(lanczos,
-		lanczos(&mat, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+		lanczos(MAKE_MAT_MATVEC(&mat), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 	);
 
 	for (int i = 0; i < number_of_eigenvalues; i++) {
