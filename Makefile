@@ -1,24 +1,30 @@
 CC			:= icx
-DEPFLAGS	:= -MMD
 CFLAGS		:= -std=c11 -Wall -O3 -qopenmp
 LDFLAGS 	:= -lmkl_rt
 SRCS		:= $(wildcard *.c)
-OBJS		:= $(SRCS:.c=.o)
-DEPS		:= $(SRCS:.c=.d)
+OUTDIR		:= build
+OBJS		:= $(addprefix $(OUTDIR)/, $(SRCS:.c=.o))
+DEPS		:= $(addprefix $(OUTDIR)/, $(SRCS:.c=.d))
+TARGET		:= main.out
 
-all: main.out
+DEPFLAGS	 = -MT $@ -MMD -MF $(OUTDIR)/$*.d
 
-main.out: $(OBJS)
+all: $(OUTDIR)/$(TARGET)
+
+$(OUTDIR)/$(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-%.o: %.c %.d
-	$(CC) $(DEPFLAGS) $(CFLAGS) -c $<
+$(OUTDIR)/%.o: %.c $(OUTDIR)/%.d | $(OUTDIR)
+	$(CC) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(DEPS):
 
 include $(DEPS)
 
+$(OUTDIR):
+	mkdir $@
+
 clean:
-	rm -f main.out *.o *.d
+	rm -rf $(OUTDIR)
 
 .PHONY: all clean
