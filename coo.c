@@ -32,9 +32,9 @@ void parse_to_coo(char *src_line, Coo *dist) {
 	sscanf(cur, "%lg", &value);
 
 	// fortran は 1-index, c は 0-index
-	dist->index_row = row - 1;
-	dist->index_column = column - 1;
-	dist->value = value;
+	dist->index_row 	= row - 1;
+	dist->index_column	= column - 1;
+	dist->value 		= value;
 }
 
 Mat_Coo read_mat_coo(char *filepath) {
@@ -86,7 +86,11 @@ Mat_Coo read_mat_coo(char *filepath) {
 	// 0-index to size
 	mat_dim++;
 
-	Mat_Coo ret = { entries, line_count, mat_dim };
+	Mat_Coo ret = {
+		.data 		= entries,
+		.length		= line_count,
+		.dimension	= mat_dim,
+	};
 	return ret;
 }
 
