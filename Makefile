@@ -1,20 +1,22 @@
 CC			:= icx
+DEPFLAGS	 = -MT $@ -MMD -MF $(OUTDIR)/$*.d
 CFLAGS		:= -std=c11 -Wall -O3 -qopenmp
 LDFLAGS 	:= -lmkl_rt
-SRCS		:= $(wildcard *.c)
-OUTDIR		:= build
-OBJS		:= $(addprefix $(OUTDIR)/, $(SRCS:.c=.o))
-DEPS		:= $(addprefix $(OUTDIR)/, $(SRCS:.c=.d))
-TARGET		:= main.out
 
-DEPFLAGS	 = -MT $@ -MMD -MF $(OUTDIR)/$*.d
+SRCDIR		:= src
+OUTDIR		:= build
+
+SRCS		:= $(wildcard $(SRCDIR)/*.c)
+OBJS		:= $(addprefix $(OUTDIR)/, $(notdir $(SRCS:.c=.o)))
+DEPS		:= $(addprefix $(OUTDIR)/, $(notdir $(SRCS:.c=.d)))
+TARGET		:= main.out
 
 all: $(OUTDIR)/$(TARGET)
 
 $(OUTDIR)/$(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-$(OUTDIR)/%.o: %.c $(OUTDIR)/%.d | $(OUTDIR)
+$(OUTDIR)/%.o: $(SRCDIR)/%.c $(OUTDIR)/%.d | $(OUTDIR)
 	$(CC) $(DEPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(DEPS):
