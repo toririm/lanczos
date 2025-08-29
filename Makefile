@@ -11,8 +11,6 @@ OBJS		:= $(addprefix $(OUTDIR)/, $(notdir $(SRCS:.c=.o)))
 DEPS		:= $(addprefix $(OUTDIR)/, $(notdir $(SRCS:.c=.d)))
 TARGET		:= main.out
 
-all: $(OUTDIR)/$(TARGET)
-
 $(OUTDIR)/$(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -26,7 +24,9 @@ include $(DEPS)
 $(OUTDIR):
 	mkdir $@
 
+.PHONY: all
+all: $(OUTDIR)/$(TARGET)
+
+.PHONY: clean
 clean:
 	rm -rf $(OUTDIR)
-
-.PHONY: all clean
