@@ -41,7 +41,7 @@ Mat_Coo read_mat_coo(char *filepath) {
 	Coo *entries;
 	int mat_dim = 0;
 	
-	char **lines, *line, *file_content;
+	char **lines, **tmp, *line, *file_content;
 	int allocated_lines = 0;
 	int line_count = 0;
 
@@ -55,12 +55,14 @@ Mat_Coo read_mat_coo(char *filepath) {
 	while (line) {
 		if (allocated_lines <= line_count) {
 			allocated_lines += BUFSIZ;
-			lines = realloc(lines, sizeof(char *) * allocated_lines);
-			if (lines == NULL) {
+			tmp = realloc(lines, sizeof(char *) * allocated_lines);
+			if (tmp == NULL) {
 				fprintf(stderr, "realloc failed\n");
 				free(file_content);
+				free(lines);
 				exit(EXIT_FAILURE);
 			}
+			lines = tmp;
 		}
 		lines[line_count] = line;
 		line = strtok(NULL, "\n");

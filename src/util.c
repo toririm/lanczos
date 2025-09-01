@@ -7,7 +7,7 @@
 
 char *read_from_file(char *filepath) {
   FILE *fp;
-  char *head;
+  char *head, *tmp;
   size_t read_bytes, total_bytes = 0;
 
   fp = fopen(filepath, "r");
@@ -20,13 +20,14 @@ char *read_from_file(char *filepath) {
 
   read_bytes = -1;
   while (read_bytes != 0) {
-    head = realloc(head, total_bytes + BUFSIZ + 1);
-    if (head == NULL) {
+    tmp = realloc(head, total_bytes + BUFSIZ + 1);
+    if (tmp == NULL) {
       fprintf(stderr, "realloc failed\n");
       free(head);
       fclose(fp);
       exit(EXIT_FAILURE);
     }
+    head = tmp;
 
     read_bytes = fread(head + total_bytes, sizeof(char), BUFSIZ, fp);
     if (ferror(fp)) {
