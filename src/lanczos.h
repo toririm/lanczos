@@ -20,10 +20,17 @@ typedef struct mat_matvec {
 #define MAKE_MAT_MATVEC(mat_ptr) \
     _Generic((mat_ptr), \
         Mat_Coo *: ((Mat_Matvec){ \
-            .mat = (void *)(mat_ptr), \
-            .matvec = (Matvec_General *)matvec_coo, \
+            .mat       = (void *)(mat_ptr), \
+            .matvec    = (Matvec_General *)matvec_coo, \
+            .dimension = (mat_ptr)->dimension \
+        }), \
+        Mat_Crs *: ((Mat_Matvec){ \
+            .mat       = (void *)(mat_ptr), \
+            .matvec    = (Matvec_General *)matvec_crs, \
             .dimension = (mat_ptr)->dimension \
         }) \
     )
 
-extern void lanczos(Mat_Matvec mat_matvec, double eigenvalues[], double *eigenvectors[], int nth_eig, int max_iter, double threshold);
+extern void lanczos(Mat_Matvec mat_matvec,
+                    double eigenvalues[], double *eigenvectors[],
+                    int nth_eig, int max_iter, double threshold);
