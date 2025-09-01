@@ -20,4 +20,4 @@ typedef struct crs {
 } Mat_Crs;
 
 extern Mat_Crs convert_from_coo(const Mat_Coo *mat_coo);
-extern double *matvec_crs(const Mat_Crs *mat, const double vec[]);
+extern void matvec_crs(const Mat_Crs *mat, const double vec[], double *dist);

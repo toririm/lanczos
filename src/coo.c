@@ -96,15 +96,11 @@ Mat_Coo read_mat_coo(const char *filepath) {
 	return ret;
 }
 
-double *matvec_coo(const Mat_Coo *mat, const double vec[]) {
-	double *vec_out = calloc(mat->dimension, sizeof(double));
-	
+void matvec_coo(const Mat_Coo *mat, const double vec[], double *dist) {
 	for (int i = 0; i < mat->length; i++) {
 		Coo *entry = &(mat->data[i]);
-		vec_out[entry->index_row] += entry->value * vec[entry->index_column];
+		dist[entry->index_row] += entry->value * vec[entry->index_column];
 	}
-
-	return vec_out;
 }
 
 /**

@@ -40,17 +40,14 @@ Mat_Crs convert_from_coo(const Mat_Coo *mat_coo) {
     return crs;
 }
 
-double *matvec_crs(const Mat_Crs *mat, const double vec[]) {
+void matvec_crs(const Mat_Crs *mat, const double vec[], double *dist) {
     int i, j;
-    double *vec_out = calloc(mat->dimension, sizeof(double));
 
     #pragma omp parallel for private(j)
     for (i = 0; i < mat->dimension; i++) {
         for (j = mat->row_head_indxes[i];
             j < mat->row_head_indxes[i + 1]; j++) {
-                vec_out[i] += mat->values[j] * vec[mat->column_index[j]];
+                dist[i] += mat->values[j] * vec[mat->column_index[j]];
         }
     }
-
-    return vec_out;
 }

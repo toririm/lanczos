@@ -34,7 +34,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 	}
 
 	for (int k = 1; k < max_iter - 1; k++) {
-		v[k + 1] = matvec(mat, v[k]);
+		matvec(mat, v[k], v[k + 1]);
 		alpha = dot_product(v[k], v[k + 1], mat_dim);
 		tmat[k][k] = alpha;
 		for (int i = 0; i < nth_eig; i++) {

@@ -2,7 +2,7 @@
  * matvec 関数の一般的な型
  * 第一引数に mat を、第二引数に vec を取る
  */
-typedef double *Matvec_General(const void *, const double *);
+typedef void Matvec_General(const void *mat, const double *vec, double *dist);
 /**
  * mat と matvec をまとめた一般的な型
  * matvec の第一引数に mat を渡して動作することが期待される
