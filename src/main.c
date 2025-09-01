@@ -3,6 +3,7 @@
 #include <omp.h>
 #include "main.h"
 #include "coo.h"
+#include "crs.h"
 #include "util.h"
 #include "lanczos.h"
 
@@ -12,6 +13,7 @@
 int main(int argc, char *argv[]) {
 	char *filename;
 	Mat_Coo mat;
+	Mat_Crs mat_crs;
 	double eigenvalues[buf_size];
 	double *eigenvectors[buf_size];
 
@@ -31,9 +33,18 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < number_of_eigenvalues; i++) {
 		eigenvectors[i] = calloc(mat.dimension, sizeof(double));
 	}
-	
+
+	// Fortran から出力されたファイルは 列優先 (Column Major) なので、CRSとして読み込むためソートする
+	MEASURE(sort_matcoo,
+		sort_matcoo(&mat);
+	);
+
+	MEASURE(convert_from_coo,
+		mat_crs = convert_from_coo(&mat);
+	);
+
 	MEASURE(lanczos,
-		lanczos(MAKE_MAT_MATVEC(&mat), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+		lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 	);
 
 	for (int i = 0; i < number_of_eigenvalues; i++) {

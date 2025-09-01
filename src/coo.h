@@ -1,3 +1,4 @@
+#pragma once
 
 typedef struct coo {
 	int 	index_row;
