@@ -50,27 +50,27 @@ Mat_Coo read_mat_coo(char *filepath) {
 	);
 	
 	MEASURE(count_line,
-	lines = NULL;
-	line = strtok(file_content, "\n");
-	while (line) {
-		if (allocated_lines <= line_count) {
-			allocated_lines += BUFSIZ;
-			tmp = realloc(lines, sizeof(char *) * allocated_lines);
-			if (tmp == NULL) {
-				fprintf(stderr, "realloc failed\n");
-				free(file_content);
-				free(lines);
-				exit(EXIT_FAILURE);
+		lines = NULL;
+		line = strtok(file_content, "\n");
+		while (line) {
+			if (allocated_lines <= line_count) {
+				allocated_lines += BUFSIZ;
+				tmp = realloc(lines, sizeof(char *) * allocated_lines);
+				if (tmp == NULL) {
+					fprintf(stderr, "realloc failed\n");
+					free(file_content);
+					free(lines);
+					exit(EXIT_FAILURE);
+				}
+				lines = tmp;
 			}
-			lines = tmp;
+			lines[line_count] = line;
+			line = strtok(NULL, "\n");
+			line_count++;
 		}
-		lines[line_count] = line;
-		line = strtok(NULL, "\n");
-		line_count++;
-	}
+	);
 
 	entries = malloc(sizeof(Coo) * line_count);
-	);
 
 	#pragma omp parallel for
 	for (int i = 0; i < line_count; i++) {
