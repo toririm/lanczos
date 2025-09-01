@@ -19,6 +19,8 @@ int main(int argc, const char *argv[]) {
 	double eigenvalues[buf_size];
 	double *eigenvectors[buf_size];
 
+	printf("Using %d threads\n", omp_get_max_threads());
+
 	if (argc != 3) {
 		fprintf(stderr, "Usage: %s <input_file> <coo|crs>\n", argv[0]);
 		return EXIT_FAILURE;
