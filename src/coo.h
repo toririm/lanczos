@@ -1,8 +1,8 @@
 
 typedef struct coo {
-	int 		index_row;
-	int 		index_column;
-	double 		value;
+	int 	index_row;
+	int 	index_column;
+	double 	value;
 } Coo;
 
 typedef struct mat_coo {
