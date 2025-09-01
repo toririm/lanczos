@@ -107,3 +107,26 @@ double *matvec_coo(Mat_Coo *mat, double vec[]) {
 	return vec_out;
 }
 
+/**
+ * 行, 列の優先順で比較する比較関数
+ */
+int compare_coo(const void *a, const void *b) {
+	const Coo *mat_a = (Coo *)a;
+	const Coo *mat_b = (Coo *)b;
+	if (mat_a->index_row == mat_b->index_row && mat_a->index_column == mat_b->index_column) {
+		return 0;
+	}
+	if (mat_a->index_row == mat_b->index_row) {
+		return mat_a->index_column - mat_b->index_column;
+	} else {
+		return mat_a->index_row - mat_b->index_row;
+	}
+}
+
+/**
+ * mat を 行, 列の順でソートする
+ */
+void sort_matcoo(Mat_Coo *mat) {
+	qsort(mat->data, mat->length, sizeof(Coo), compare_coo);
+}
+

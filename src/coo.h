@@ -14,3 +14,5 @@ typedef struct mat_coo {
 extern void parse_to_coo(char *src_str, Coo *dist);
 extern Mat_Coo read_mat_coo(char *filepath);
 extern double *matvec_coo(Mat_Coo *mat, double vec[]);
+extern int compare_coo(const void *a, const void *b);
+extern void sort_matcoo(Mat_Coo *mat);
