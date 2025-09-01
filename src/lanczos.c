@@ -4,10 +4,12 @@
 #include "util.h"
 #include "lanczos.h"
 
-void lanczos(Mat_Matvec mat_matvec, double eigenvalues[], double *eigenvectors[], int nth_eig, int max_iter, double threshold) {
-    void *mat = mat_matvec.mat;
+void lanczos(const Mat_Matvec mat_matvec,
+			 double eigenvalues[], double *eigenvectors[],
+			 int nth_eig, int max_iter, double threshold) {
+    const void *mat = mat_matvec.mat;
     Matvec_General *matvec = mat_matvec.matvec;
-    int mat_dim = mat_matvec.dimension;
+    const int mat_dim = mat_matvec.dimension;
 	double **v, **tmat, *teval_last;
 	double norm, alpha, beta = 0;
 	v = calloc(max_iter, sizeof(double *));

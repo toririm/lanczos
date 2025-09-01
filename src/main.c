@@ -11,8 +11,8 @@
 #define number_of_eigenvalues 5
 #define buf_size 1000
 
-int main(int argc, char *argv[]) {
-	char *filename;
+int main(int argc, const char *argv[]) {
+	const char *filename;
 	Mat_Type mat_type;
 	Mat_Coo mat;
 	Mat_Crs mat_crs;

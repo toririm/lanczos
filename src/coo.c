@@ -37,7 +37,7 @@ void parse_to_coo(char *src_line, Coo *dist) {
 	dist->value 		= value;
 }
 
-Mat_Coo read_mat_coo(char *filepath) {
+Mat_Coo read_mat_coo(const char *filepath) {
 	Coo *entries;
 	int mat_dim = 0;
 	
@@ -96,7 +96,7 @@ Mat_Coo read_mat_coo(char *filepath) {
 	return ret;
 }
 
-double *matvec_coo(Mat_Coo *mat, double vec[]) {
+double *matvec_coo(const Mat_Coo *mat, const double vec[]) {
 	double *vec_out = calloc(mat->dimension, sizeof(double));
 	
 	for (int i = 0; i < mat->length; i++) {

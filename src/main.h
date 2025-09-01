@@ -3,4 +3,4 @@ typedef enum mat_type {
     CRS,
 } Mat_Type;
 
-extern int main(int argc, char *argv[]);
+extern int main(int argc, const char *argv[]);

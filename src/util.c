@@ -5,7 +5,7 @@
 #include <mkl_lapacke.h>
 #include "util.h"
 
-char *read_from_file(char *filepath) {
+char *read_from_file(const char *filepath) {
   FILE *fp;
   char *head, *tmp;
   size_t read_bytes, total_bytes = 0;
@@ -53,7 +53,7 @@ void gaussian_random_vec(int n, double *r) {
   LAPACKE_dlarnv(3, iseed, n, r);
 }
 
-double dot_product(double *a, double *b, int size) {
+double dot_product(const double *a, const double *b, int size) {
   double sum = 0.0;
   for (int i = 0; i < size; i++) {
     sum += a[i] * b[i];
