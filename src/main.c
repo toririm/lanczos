@@ -43,12 +43,8 @@ int main(int argc, const char *argv[]) {
 
 	if (mat_type == CRS) {
 		printf("[MODE] CRS selected\n");
-		// Fortran から出力されたファイルは 列優先 (Column Major) なので、CRSとして読み込むためソートする
-		MEASURE(sort_matcoo,
-			sort_matcoo(&mat);
-		);
 		MEASURE(convert_from_coo,
-			mat_crs = convert_from_coo(&mat);
+			mat_crs = convert_from_coo(&mat, 1);
 		);
 		MEASURE(lanczos,
 			lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);

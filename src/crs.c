@@ -5,13 +5,15 @@
 
 /**
  * 行,列の順についてソートされていることを前提とする
+ * swap_row_column > 0 で列優先でも動作する
  */
-Mat_Crs convert_from_coo(const Mat_Coo *mat_coo) {
+Mat_Crs convert_from_coo(const Mat_Coo *mat_coo, int swap_row_column) {
     int dimension         = mat_coo->dimension;
     int length            = mat_coo->length;
     double *values        = malloc(sizeof(double) * length);
     int *column_index     = malloc(sizeof(int) * length);
     int *row_head_indexes = malloc(sizeof(int) * (dimension + 1));
+    int tmp;
 
     for (int i = 0; i < dimension + 1; i++)
         row_head_indexes[i] = length;
@@ -19,10 +21,17 @@ Mat_Crs convert_from_coo(const Mat_Coo *mat_coo) {
     int cur_row = -1;
     for (int i = 0; i < length; i++) {
         Coo *data = &mat_coo->data[i];
-        int index_row = data->index_row;
+        int index_row    = data->index_row;
+        int index_column = data->index_column;
+
+        if (swap_row_column) {
+            tmp = index_row;
+            index_row = index_column;
+            index_column = tmp;
+        }
 
         values[i]       = data->value;
-        column_index[i] = data->index_column;
+        column_index[i] = index_column;
 
         if (cur_row < index_row) {
             row_head_indexes[index_row] = i;

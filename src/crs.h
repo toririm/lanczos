@@ -19,5 +19,5 @@ typedef struct crs {
     int     dimension;
 } Mat_Crs;
 
-extern Mat_Crs convert_from_coo(const Mat_Coo *mat_coo);
+extern Mat_Crs convert_from_coo(const Mat_Coo *mat_coo, int swap_row_column);
 extern void matvec_crs(const Mat_Crs *mat, const double vec[], double *dist);
