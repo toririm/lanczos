@@ -7,6 +7,7 @@
 #include "crs.h"
 #include "util.h"
 #include "lanczos.h"
+#include "lanczos_cusparse.h"
 
 #define number_of_eigenvalues 5
 #define buf_size 1000
@@ -22,7 +23,7 @@ int main(int argc, const char *argv[]) {
 	printf("Using %d threads\n", omp_get_max_threads());
 
 	if (argc != 3) {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cusparse>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 	filename = argv[1];
@@ -30,8 +31,10 @@ int main(int argc, const char *argv[]) {
 		mat_type = COO;
 	} else if (strcmp(argv[2], "crs") == 0) {
 		mat_type = CRS;
+	} else if (strcmp(argv[2], "crs_cusparse") == 0) {
+		mat_type = CRS_CUSPARSE;
 	} else {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cusparse>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
@@ -48,6 +51,14 @@ int main(int argc, const char *argv[]) {
 		);
 		MEASURE(lanczos,
 			lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+		);
+	} else if (mat_type == CRS_CUSPARSE) {
+		printf("[MODE] CRS_CUSPARSE selected\n");
+		MEASURE(convert_from_coo,
+			mat_crs = convert_from_coo(&mat, 1);
+		);
+		MEASURE(lanczos_cusparse_crs,
+			lanczos_cusparse_crs(&mat_crs, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 		);
 	} else {
 		printf("[MODE] COO selected\n");
