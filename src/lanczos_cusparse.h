@@ -23,8 +23,9 @@
     }                                                                          \
 }
 
-extern int matvec_cusparse_crs(const Mat_Crs *mat, const double *vec, double *dist);
+extern int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
+						       const double *vec, double *dist);
 
-extern void lanczos_cusparse_crs(const Mat_Crs *mat,
+extern int lanczos_cusparse_crs(const Mat_Crs *mat,
                                  double eigenvalues[], double *eigenvectors[],
                                  int nth_eig, int max_iter, double threshold);
