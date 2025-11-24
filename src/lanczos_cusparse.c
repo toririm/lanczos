@@ -4,6 +4,32 @@
 #include "util.h"
 #include "lanczos_cusparse.h"
 
+int create_cusparse_matrix(const Mat_Crs *src, cusparseSpMatDescr_t *dist) {
+	int    *dA_csrOffsets, *dA_columns;
+	double *dA_values;
+	CHECK_CUDA( cudaMalloc((void**) &dA_csrOffsets,
+									(src->dimension + 1) * sizeof(int)) );
+	CHECK_CUDA( cudaMalloc((void**) &dA_columns,
+									src->length * sizeof(int)) );
+	CHECK_CUDA( cudaMalloc((void**) &dA_values,
+									src->length * sizeof(double)) );
+	CHECK_CUDA( cudaMemcpy(dA_csrOffsets, src->row_head_indxes,
+									(src->dimension + 1) * sizeof(int),
+									cudaMemcpyHostToDevice) );
+	CHECK_CUDA( cudaMemcpy(dA_columns, src->column_index,
+									src->length * sizeof(int),
+									cudaMemcpyHostToDevice) );
+	CHECK_CUDA( cudaMemcpy(dA_values, src->values,
+									src->length * sizeof(double),
+									cudaMemcpyHostToDevice) );
+	CHECK_CUSPARSE( cusparseCreateCsr(dist, src->dimension, src->dimension,
+									   src->length,
+									   dA_csrOffsets, dA_columns, dA_values,
+									   CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+									   CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F) );
+	return EXIT_SUCCESS;
+}
+
 int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
 						 const double *vec, double *dist) {
 	const double alpha = 1.0;
@@ -62,26 +88,7 @@ int lanczos_cusparse_crs(const Mat_Crs *mat,
     int    *dA_csrOffsets, *dA_columns;
 	double *dA_values;
 	cusparseSpMatDescr_t matA = NULL;
-	CHECK_CUDA( cudaMalloc((void**) &dA_csrOffsets,
-									(mat->dimension + 1) * sizeof(int)) );
-	CHECK_CUDA( cudaMalloc((void**) &dA_columns,
-									mat->length * sizeof(int)) );
-	CHECK_CUDA( cudaMalloc((void**) &dA_values,
-									mat->length * sizeof(double)) );
-	CHECK_CUDA( cudaMemcpy(dA_csrOffsets, mat->row_head_indxes,
-									(mat->dimension + 1) * sizeof(int),
-									cudaMemcpyHostToDevice) );
-	CHECK_CUDA( cudaMemcpy(dA_columns, mat->column_index,
-									mat->length * sizeof(int),
-									cudaMemcpyHostToDevice) );
-	CHECK_CUDA( cudaMemcpy(dA_values, mat->values,
-									mat->length * sizeof(double),
-									cudaMemcpyHostToDevice) );
-	CHECK_CUSPARSE( cusparseCreateCsr(&matA, mat->dimension, mat->dimension,
-									   mat->length,
-									   dA_csrOffsets, dA_columns, dA_values,
-									   CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-									   CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F) );
+	create_cusparse_matrix(mat, &matA);
 	// --- Lanczos algorithm ---
     const int mat_dim = mat->dimension;
 	double **v, **tmat, *teval_last;

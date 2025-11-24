@@ -23,6 +23,8 @@
     }                                                                          \
 }
 
+extern int create_cusparse_matrix(const Mat_Crs *src, cusparseSpMatDescr_t *dist);
+
 extern int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
 						       const double *vec, double *dist);
 
