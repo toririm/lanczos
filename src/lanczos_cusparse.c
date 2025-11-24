@@ -80,13 +80,6 @@ int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
 int lanczos_cusparse_crs(const Mat_Crs *mat,
              			  double eigenvalues[], double *eigenvectors[],
              			  int nth_eig, int max_iter, double threshold) {
-	// Device memory management
-	// y = alpha * A * x + beta * y
-	// x, y: vectors
-	// A: sparse matrix in CSR format
-	// alpha, beta: scalars
-    int    *dA_csrOffsets, *dA_columns;
-	double *dA_values;
 	cusparseSpMatDescr_t matA = NULL;
 	create_cusparse_matrix(mat, &matA);
 	// --- Lanczos algorithm ---
@@ -161,8 +154,5 @@ int lanczos_cusparse_crs(const Mat_Crs *mat,
 		tmat[k + 1][k] = beta;
 	}
 	CHECK_CUSPARSE( cusparseDestroySpMat(matA) );
-	CHECK_CUDA( cudaFree(dA_csrOffsets) );
-	CHECK_CUDA( cudaFree(dA_columns) );
-	CHECK_CUDA( cudaFree(dA_values) );
 	return EXIT_SUCCESS;
 }
