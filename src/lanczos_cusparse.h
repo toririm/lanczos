@@ -56,6 +56,56 @@
     }                                                                          \
 }
 
+#define CHECK_CUDA_GOTO(func, label)                                           \
+do {                                                                           \
+	cudaError_t status__ = (func);                                             \
+	if (status__ != cudaSuccess) {                                             \
+		printf("CUDA API failed at line %d with error: %s (%d)\n",             \
+			   __LINE__, cudaGetErrorString(status__), status__);              \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CUSPARSE_GOTO(func, label)                                       \
+do {                                                                           \
+	cusparseStatus_t status__ = (func);                                        \
+	if (status__ != CUSPARSE_STATUS_SUCCESS) {                                 \
+		printf("CUSPARSE API failed at line %d with error code: %d\n",         \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CUBLAS_GOTO(func, label)                                         \
+do {                                                                           \
+	cublasStatus_t status__ = (func);                                          \
+	if (status__ != CUBLAS_STATUS_SUCCESS) {                                   \
+		printf("CUBLAS API failed at line %d with error code: %d\n",           \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CUSOLVER_GOTO(func, label)                                       \
+do {                                                                           \
+	cusolverStatus_t status__ = (func);                                        \
+	if (status__ != CUSOLVER_STATUS_SUCCESS) {                                 \
+		printf("CUSOLVER API failed at line %d with error code: %d\n",         \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CURAND_GOTO(func, label)                                         \
+do {                                                                           \
+	curandStatus_t status__ = (func);                                          \
+	if (status__ != CURAND_STATUS_SUCCESS) {                                   \
+		printf("CURAND API failed at line %d with error code: %d\n",           \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
 typedef struct {
     cusparseSpMatDescr_t descr;
     int *d_row_offsets;
