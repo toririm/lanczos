@@ -23,7 +23,7 @@ int main(int argc, const char *argv[]) {
 	printf("Using %d threads\n", omp_get_max_threads());
 
 	if (argc != 3) {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cusparse>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 	filename = argv[1];
@@ -31,10 +31,10 @@ int main(int argc, const char *argv[]) {
 		mat_type = COO;
 	} else if (strcmp(argv[2], "crs") == 0) {
 		mat_type = CRS;
-	} else if (strcmp(argv[2], "crs_cusparse") == 0) {
-		mat_type = CRS_CUSPARSE;
+	} else if (strcmp(argv[2], "crs_cuda") == 0) {
+		mat_type = CRS_CUDA;
 	} else {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cusparse>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
@@ -52,8 +52,8 @@ int main(int argc, const char *argv[]) {
 		MEASURE(lanczos,
 			lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 		);
-	} else if (mat_type == CRS_CUSPARSE) {
-		printf("[MODE] CRS_CUSPARSE selected\n");
+	} else if (mat_type == CRS_CUDA) {
+		printf("[MODE] CRS_CUDA selected\n");
 		MEASURE(convert_from_coo,
 			mat_crs = convert_from_coo(&mat, 1);
 		);
