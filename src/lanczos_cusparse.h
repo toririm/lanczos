@@ -1,5 +1,8 @@
 #include <cuda_runtime_api.h>
 #include <cusparse.h>
+#include <cublas_v2.h>
+#include <cusolverDn.h>
+#include <curand.h>
 #include <stdlib.h>
 #include "crs.h"
 
@@ -17,17 +20,54 @@
 {                                                                              \
     cusparseStatus_t status = (func);                                          \
     if (status != CUSPARSE_STATUS_SUCCESS) {                                   \
-        printf("CUSPARSE API failed at line %d with error: %s (%d)\n",         \
-               __LINE__, cusparseGetErrorString(status), status);              \
+        printf("CUSPARSE API failed at line %d with error code: %d\n",         \
+               __LINE__, status);                                             \
         return EXIT_FAILURE;                                                   \
     }                                                                          \
 }
 
-extern int create_cusparse_matrix(const Mat_Crs *src, cusparseSpMatDescr_t *dist);
+#define CHECK_CUBLAS(func)                                                     \
+{                                                                              \
+    cublasStatus_t status = (func);                                            \
+    if (status != CUBLAS_STATUS_SUCCESS) {                                     \
+        printf("CUBLAS API failed at line %d with error code: %d\n",           \
+               __LINE__, status);                                             \
+        return EXIT_FAILURE;                                                   \
+    }                                                                          \
+}
 
-extern int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
-						       const cusparseDnVecDescr_t *vec,
-                               cusparseDnVecDescr_t *dist);
+#define CHECK_CUSOLVER(func)                                                   \
+{                                                                              \
+    cusolverStatus_t status = (func);                                          \
+    if (status != CUSOLVER_STATUS_SUCCESS) {                                   \
+        printf("CUSOLVER API failed at line %d with error code: %d\n",         \
+               __LINE__, status);                                             \
+        return EXIT_FAILURE;                                                   \
+    }                                                                          \
+}
+
+#define CHECK_CURAND(func)                                                     \
+{                                                                              \
+    curandStatus_t status = (func);                                            \
+    if (status != CURAND_STATUS_SUCCESS) {                                     \
+        printf("CURAND API failed at line %d with error code: %d\n",           \
+               __LINE__, status);                                             \
+        return EXIT_FAILURE;                                                   \
+    }                                                                          \
+}
+
+typedef struct {
+    cusparseSpMatDescr_t descr;
+    int *d_row_offsets;
+    int *d_columns;
+    double *d_values;
+    int rows;
+    int cols;
+    int nnz;
+} CuSparseMatrix;
+
+extern int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist);
+extern void destroy_cusparse_matrix(CuSparseMatrix *mat);
 
 extern int lanczos_cusparse_crs(const Mat_Crs *mat,
                                  double eigenvalues[], double *eigenvectors[],

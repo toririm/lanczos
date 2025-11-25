@@ -1,190 +1,431 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdbool.h>
+#include <string.h>
 #include "util.h"
 #include "lanczos_cusparse.h"
 
-int create_cusparse_matrix(const Mat_Crs *src, cusparseSpMatDescr_t *dist) {
-	int    *dA_csrOffsets, *dA_columns;
-	double *dA_values;
-	CHECK_CUDA( cudaMalloc((void**) &dA_csrOffsets,
-									(src->dimension + 1) * sizeof(int)) );
-	CHECK_CUDA( cudaMalloc((void**) &dA_columns,
-									src->length * sizeof(int)) );
-	CHECK_CUDA( cudaMalloc((void**) &dA_values,
-									src->length * sizeof(double)) );
-	CHECK_CUDA( cudaMemcpy(dA_csrOffsets, src->row_head_indxes,
-									(src->dimension + 1) * sizeof(int),
-									cudaMemcpyHostToDevice) );
-	CHECK_CUDA( cudaMemcpy(dA_columns, src->column_index,
-									src->length * sizeof(int),
-									cudaMemcpyHostToDevice) );
-	CHECK_CUDA( cudaMemcpy(dA_values, src->values,
-									src->length * sizeof(double),
-									cudaMemcpyHostToDevice) );
-	CHECK_CUSPARSE( cusparseCreateCsr(dist, src->dimension, src->dimension,
-									   src->length,
-									   dA_csrOffsets, dA_columns, dA_values,
-									   CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-									   CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F) );
+#define CHECK_CUDA_GOTO(func, label)                                           \
+do {                                                                           \
+	cudaError_t status__ = (func);                                             \
+	if (status__ != cudaSuccess) {                                             \
+		printf("CUDA API failed at line %d with error: %s (%d)\n",             \
+			   __LINE__, cudaGetErrorString(status__), status__);              \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CUSPARSE_GOTO(func, label)                                       \
+do {                                                                           \
+	cusparseStatus_t status__ = (func);                                        \
+	if (status__ != CUSPARSE_STATUS_SUCCESS) {                                 \
+		printf("CUSPARSE API failed at line %d with error code: %d\n",         \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CUBLAS_GOTO(func, label)                                         \
+do {                                                                           \
+	cublasStatus_t status__ = (func);                                          \
+	if (status__ != CUBLAS_STATUS_SUCCESS) {                                   \
+		printf("CUBLAS API failed at line %d with error code: %d\n",           \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CUSOLVER_GOTO(func, label)                                       \
+do {                                                                           \
+	cusolverStatus_t status__ = (func);                                        \
+	if (status__ != CUSOLVER_STATUS_SUCCESS) {                                 \
+		printf("CUSOLVER API failed at line %d with error code: %d\n",         \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+#define CHECK_CURAND_GOTO(func, label)                                         \
+do {                                                                           \
+	curandStatus_t status__ = (func);                                          \
+	if (status__ != CURAND_STATUS_SUCCESS) {                                   \
+		printf("CURAND API failed at line %d with error code: %d\n",           \
+			   __LINE__, status__);                                            \
+		goto label;                                                            \
+	}                                                                          \
+} while (0)
+
+static inline size_t round_up_even(size_t value) {
+	return (value % 2 == 0) ? value : value + 1;
+}
+
+int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
+	if (src == NULL || dist == NULL) {
+		return EXIT_FAILURE;
+	}
+
+	memset(dist, 0, sizeof(*dist));
+
+	dist->rows = src->dimension;
+	dist->cols = src->dimension;
+	dist->nnz  = src->length;
+
+	cudaError_t cuda_status;
+
+	cuda_status = cudaMalloc((void**) &dist->d_row_offsets,
+							 (size_t)(dist->rows + 1) * sizeof(int));
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cuda_status = cudaMalloc((void**) &dist->d_columns,
+							 (size_t)dist->nnz * sizeof(int));
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cuda_status = cudaMalloc((void**) &dist->d_values,
+							 (size_t)dist->nnz * sizeof(double));
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cuda_status = cudaMemcpy(dist->d_row_offsets, src->row_head_indxes,
+							 (size_t)(dist->rows + 1) * sizeof(int),
+							 cudaMemcpyHostToDevice);
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cuda_status = cudaMemcpy(dist->d_columns, src->column_index,
+							 (size_t)dist->nnz * sizeof(int),
+							 cudaMemcpyHostToDevice);
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cuda_status = cudaMemcpy(dist->d_values, src->values,
+							 (size_t)dist->nnz * sizeof(double),
+							 cudaMemcpyHostToDevice);
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cusparseStatus_t sparse_status = cusparseCreateCsr(&dist->descr,
+													   dist->rows,
+													   dist->cols,
+													   dist->nnz,
+													   dist->d_row_offsets,
+													   dist->d_columns,
+													   dist->d_values,
+													   CUSPARSE_INDEX_32I,
+													   CUSPARSE_INDEX_32I,
+													   CUSPARSE_INDEX_BASE_ZERO,
+													   CUDA_R_64F);
+	if (sparse_status != CUSPARSE_STATUS_SUCCESS) {
+		destroy_cusparse_matrix(dist);
+		printf("CUSPARSE API failed at line %d with error code: %d\n",
+			   __LINE__, sparse_status);
+		return EXIT_FAILURE;
+	}
+
 	return EXIT_SUCCESS;
 }
 
-int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
-				 		const cusparseDnVecDescr_t *vec,
-				 		cusparseDnVecDescr_t *dist) {
-	(void)dimension;
-	const double alpha = 1.0;
-	const double beta  = 0.0;
-	cusparseHandle_t handle = NULL;
-	void *dBuffer = NULL;
-	size_t bufferSize = 0;
-	CHECK_CUSPARSE( cusparseCreate(&handle) );
-	CHECK_CUSPARSE( cusparseSpMV_bufferSize(handle,
-								CUSPARSE_OPERATION_NON_TRANSPOSE,
-								&alpha, *mat, *vec, &beta, *dist,
-								CUDA_R_64F,
-								CUSPARSE_SPMV_ALG_DEFAULT,
-								&bufferSize) );
-	if (bufferSize > 0) {
-		CHECK_CUDA( cudaMalloc(&dBuffer, bufferSize) );
+void destroy_cusparse_matrix(CuSparseMatrix *mat) {
+	if (mat == NULL) {
+		return;
 	}
-	CHECK_CUSPARSE( cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
-									&alpha, *mat, *vec, &beta, *dist,
-									CUDA_R_64F,
-									CUSPARSE_SPMV_ALG_DEFAULT, dBuffer) );
-	if (dBuffer != NULL) {
-		CHECK_CUDA( cudaFree(dBuffer) );
+	if (mat->descr != NULL) {
+		cusparseDestroySpMat(mat->descr);
 	}
-	CHECK_CUSPARSE( cusparseDestroy(handle) );
-	return EXIT_SUCCESS;
+	if (mat->d_row_offsets != NULL) {
+		cudaFree(mat->d_row_offsets);
+	}
+	if (mat->d_columns != NULL) {
+		cudaFree(mat->d_columns);
+	}
+	if (mat->d_values != NULL) {
+		cudaFree(mat->d_values);
+	}
+	memset(mat, 0, sizeof(*mat));
 }
 
 int lanczos_cusparse_crs(const Mat_Crs *mat,
-             		  double eigenvalues[], double *eigenvectors[],
-             		  int nth_eig, int max_iter, double threshold) {
-	cusparseSpMatDescr_t matA = NULL;
-	double *dVecIn = NULL;
-	double *dVecOut = NULL;
-	cusparseDnVecDescr_t vecX = NULL;
-	cusparseDnVecDescr_t vecY = NULL;
-	double **v = NULL;
-	double **tmat = NULL;
-	double *teval_last = NULL;
-	bool allocated_eigenvectors = false;
-	int status = EXIT_FAILURE;
+			  double eigenvalues[], double *eigenvectors[],
+			  int nth_eig, int max_iter, double threshold) {
+	(void)eigenvectors;
 
+	if (mat == NULL || eigenvalues == NULL) {
+		return EXIT_FAILURE;
+	}
+
+	if (max_iter < 2) {
+		printf("max_iter must be >= 2\n");
+		return EXIT_FAILURE;
+	}
+
+	CuSparseMatrix matA;
 	if (create_cusparse_matrix(mat, &matA) != EXIT_SUCCESS) {
 		return EXIT_FAILURE;
 	}
 
+	int status = EXIT_FAILURE;
 	const int mat_dim = mat->dimension;
-	CHECK_CUDA( cudaMalloc((void**) &dVecIn, mat_dim * sizeof(double)) );
-	CHECK_CUDA( cudaMalloc((void**) &dVecOut, mat_dim * sizeof(double)) );
-	CHECK_CUSPARSE( cusparseCreateDnVec(&vecX, mat_dim, dVecIn, CUDA_R_64F) );
-	CHECK_CUSPARSE( cusparseCreateDnVec(&vecY, mat_dim, dVecOut, CUDA_R_64F) );
+	const size_t vec_stride = (size_t)mat_dim;
 
-	v = calloc(max_iter, sizeof(double *));
-	if (v == NULL) {
-		goto cleanup;
-	}
-	for (int i = 0; i < max_iter; i++) {
-		v[i] = calloc(mat_dim, sizeof(double));
-		if (v[i] == NULL) {
-			goto cleanup;
-		}
-	}
-	tmat = calloc(max_iter, sizeof(double *));
-	if (tmat == NULL) {
-		goto cleanup;
-	}
-	for (int i = 0; i < max_iter; i++) {
-		tmat[i] = calloc(max_iter, sizeof(double));
-		if (tmat[i] == NULL) {
-			goto cleanup;
-		}
-	}
-	eigenvectors = calloc(mat_dim, sizeof(double *));
-	if (eigenvectors == NULL) {
-		goto cleanup;
-	}
-	allocated_eigenvectors = true;
-	for (int i = 0; i < mat_dim; i++) {
-		eigenvectors[i] = calloc(mat_dim, sizeof(double));
-		if (eigenvectors[i] == NULL) {
-			goto cleanup;
-		}
-	}
-	teval_last = calloc(mat_dim, sizeof(double));
+	cusparseHandle_t sp_handle = NULL;
+	cublasHandle_t   blas_handle = NULL;
+	cusolverDnHandle_t solver_handle = NULL;
+	curandGenerator_t rng = NULL;
+	cusparseDnVecDescr_t vecX = NULL;
+	cusparseDnVecDescr_t vecY = NULL;
+	double *d_V = NULL;
+	double *d_T = NULL;
+	double *d_W = NULL;
+	double *d_work = NULL;
+	int *d_info = NULL;
+	void *d_buffer = NULL;
+	double *d_random = NULL;
+
+	double *h_T = NULL;
+	double *teval_last = NULL;
+
+	const int ld = max_iter;
+	size_t matrix_bytes = (size_t)ld * (size_t)ld * sizeof(double);
+	size_t eigvec_bytes = matrix_bytes;
+
+	double threshold_sq = threshold * threshold;
+
+	memset(eigenvalues, 0, (size_t)nth_eig * sizeof(double));
+
+	teval_last = (double*) calloc((size_t)nth_eig, sizeof(double));
 	if (teval_last == NULL) {
+		printf("Failed to allocate teval_last\n");
 		goto cleanup;
 	}
 
-	gaussian_random_vec(mat_dim, v[1]);
-
-	double norm = sqrt(dot_product(v[1], v[1], mat_dim));
-	double alpha = 0.0;
-	double beta = 0.0;
-	for (int i = 0; i < mat_dim; i++) {
-		v[1][i] = 1.0 / norm * v[1][i];
+	h_T = (double*) calloc((size_t)ld * (size_t)ld, sizeof(double));
+	if (h_T == NULL) {
+		printf("Failed to allocate host tridiagonal buffer\n");
+		goto cleanup;
 	}
 
-	for (int k = 1; k < max_iter - 1; k++) {
-		CHECK_CUDA( cudaMemcpy(dVecIn, v[k], mat_dim * sizeof(double),
-					cudaMemcpyHostToDevice) );
-		CHECK_CUDA( cudaMemset(dVecOut, 0, mat_dim * sizeof(double)) );
-		if (matvec_cusparse_crs(&matA, mat_dim, &vecX, &vecY) != EXIT_SUCCESS) {
-			goto cleanup;
-		}
-		CHECK_CUDA( cudaMemcpy(v[k + 1], dVecOut,
-					mat_dim * sizeof(double), cudaMemcpyDeviceToHost) );
-		alpha = dot_product(v[k], v[k + 1], mat_dim);
-		tmat[k][k] = alpha;
+	CHECK_CUSPARSE_GOTO(cusparseCreate(&sp_handle), cleanup);
+	CHECK_CUBLAS_GOTO(cublasCreate(&blas_handle), cleanup);
+	CHECK_CUSOLVER_GOTO(cusolverDnCreate(&solver_handle), cleanup);
+	CHECK_CURAND_GOTO(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT), cleanup);
+	CHECK_CURAND_GOTO(curandSetPseudoRandomGeneratorSeed(rng, 123456789ULL), cleanup);
+
+	const size_t total_vec_elems = vec_stride * (size_t)max_iter;
+	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_V, total_vec_elems * sizeof(double)), cleanup);
+	CHECK_CUDA_GOTO(cudaMemset(d_V, 0, total_vec_elems * sizeof(double)), cleanup);
+
+	const size_t padded_dim = round_up_even((size_t)mat_dim);
+	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_random, padded_dim * sizeof(double)), cleanup);
+
+	CHECK_CURAND_GOTO(curandGenerateNormalDouble(rng, d_random, padded_dim, 0.0, 1.0), cleanup);
+	CHECK_CUDA_GOTO(cudaMemcpy(d_V, d_random, (size_t)mat_dim * sizeof(double), cudaMemcpyDeviceToDevice), cleanup);
+
+	double norm = 0.0;
+	CHECK_CUBLAS_GOTO(cublasDnrm2(blas_handle, mat_dim, d_V, 1, &norm), cleanup);
+	if (norm == 0.0) {
+		printf("Random vector has zero norm\n");
+		goto cleanup;
+	}
+	double inv_norm = 1.0 / norm;
+	CHECK_CUBLAS_GOTO(cublasDscal(blas_handle, mat_dim, &inv_norm, d_V, 1), cleanup);
+
+	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecX, mat_dim, d_V, CUDA_R_64F), cleanup);
+	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecY, mat_dim, d_V + vec_stride, CUDA_R_64F), cleanup);
+
+	size_t buffer_size = 0;
+	const double alpha_spmv = 1.0;
+	const double beta_spmv = 0.0;
+	CHECK_CUSPARSE_GOTO(cusparseSpMV_bufferSize(sp_handle,
+												CUSPARSE_OPERATION_NON_TRANSPOSE,
+												&alpha_spmv,
+												matA.descr,
+												vecX,
+												&beta_spmv,
+												vecY,
+												CUDA_R_64F,
+												CUSPARSE_SPMV_ALG_DEFAULT,
+												&buffer_size), cleanup);
+	if (buffer_size > 0) {
+		CHECK_CUDA_GOTO(cudaMalloc(&d_buffer, buffer_size), cleanup);
+	}
+
+	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_T, matrix_bytes), cleanup);
+	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_W, (size_t)ld * sizeof(double)), cleanup);
+	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_info, sizeof(int)), cleanup);
+
+	int lwork = 0;
+	CHECK_CUSOLVER_GOTO(cusolverDnDsyevd_bufferSize(solver_handle,
+													CUSOLVER_EIG_MODE_VECTOR,
+													CUBLAS_FILL_MODE_UPPER,
+													ld,
+													d_T,
+													ld,
+													d_W,
+													&lwork), cleanup);
+	if (lwork <= 0) {
+		printf("Invalid workspace size returned from cuSOLVER\n");
+		goto cleanup;
+	}
+	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_work, (size_t)lwork * sizeof(double)), cleanup);
+
+	double beta_prev = 0.0;
+
+#define H_T(i, j) h_T[(size_t)(j) * (size_t)ld + (size_t)(i)]
+
+	for (int k = 0; k < max_iter - 1; k++) {
+		double *v_k = d_V + (size_t)k * vec_stride;
+		double *v_next = d_V + (size_t)(k + 1) * vec_stride;
+		double *v_prev = (k > 0) ? (d_V + (size_t)(k - 1) * vec_stride) : NULL;
+
+		CHECK_CUSPARSE_GOTO(cusparseDnVecSetValues(vecX, v_k), cleanup);
+		CHECK_CUSPARSE_GOTO(cusparseDnVecSetValues(vecY, v_next), cleanup);
+		CHECK_CUDA_GOTO(cudaMemset(v_next, 0, vec_stride * sizeof(double)), cleanup);
+		CHECK_CUSPARSE_GOTO(cusparseSpMV(sp_handle,
+										 CUSPARSE_OPERATION_NON_TRANSPOSE,
+										 &alpha_spmv,
+										 matA.descr,
+										 vecX,
+										 &beta_spmv,
+										 vecY,
+										 CUDA_R_64F,
+										 CUSPARSE_SPMV_ALG_DEFAULT,
+										 d_buffer), cleanup);
+
+		double alpha = 0.0;
+		CHECK_CUBLAS_GOTO(cublasDdot(blas_handle, mat_dim, v_k, 1, v_next, 1, &alpha), cleanup);
+		H_T(k, k) = alpha;
+
 		for (int i = 0; i < nth_eig; i++) {
 			teval_last[i] = eigenvalues[i];
 		}
-		diagonalize_double(tmat, eigenvalues, eigenvectors, k + 1);
-		bool all = true;
-		for (int i = 0; i < nth_eig; i++) {
-			double diff = eigenvalues[i] - teval_last[i];
-			if (diff * diff > threshold * threshold) {
-				all = false;
+
+		int current_dim = k + 1;
+		size_t copy_cols = (size_t)current_dim;
+		CHECK_CUDA_GOTO(cudaMemcpy(d_T,
+								   h_T,
+								   (size_t)ld * copy_cols * sizeof(double),
+								   cudaMemcpyHostToDevice),
+						cleanup);
+		CHECK_CUSOLVER_GOTO(cusolverDnDsyevd(solver_handle,
+											 CUSOLVER_EIG_MODE_VECTOR,
+											 CUBLAS_FILL_MODE_UPPER,
+											 current_dim,
+											 d_T,
+											 ld,
+											 d_W,
+											 d_work,
+											 lwork,
+											 d_info),
+							cleanup);
+
+		int info_host = 0;
+		CHECK_CUDA_GOTO(cudaMemcpy(&info_host, d_info, sizeof(int), cudaMemcpyDeviceToHost), cleanup);
+		if (info_host != 0) {
+			printf("cuSOLVER Dsyevd failed with info = %d\n", info_host);
+			goto cleanup;
+		}
+
+		CHECK_CUDA_GOTO(cudaMemcpy(eigenvalues,
+								   d_W,
+								   (size_t)current_dim * sizeof(double),
+								   cudaMemcpyDeviceToHost),
+						cleanup);
+
+		bool converged = true;
+		if (current_dim < nth_eig) {
+			converged = false;
+		} else {
+			for (int i = 0; i < nth_eig; i++) {
+				double diff = eigenvalues[i] - teval_last[i];
+				if (diff * diff > threshold_sq) {
+					converged = false;
+					break;
+				}
 			}
 		}
-		if (all) {
+
+		if (converged) {
 			printf("converged ");
-			for (int i = 0; i < nth_eig; i++)
+			for (int i = 0; i < nth_eig; i++) {
 				printf("%.1E ", teval_last[i] - eigenvalues[i]);
+			}
 			printf("\n");
 			status = EXIT_SUCCESS;
 			goto cleanup;
 		}
-		printf("%d\t", k);
-		for (int i = 0; i < nth_eig; i++)
+
+		printf("%d\t", k + 1);
+		for (int i = 0; i < nth_eig && i < current_dim; i++) {
 			printf("%.7f\t", eigenvalues[i]);
-		printf("\n");
-		for (int i = 0; i < mat_dim; i++) {
-			v[k + 1][i] = v[k + 1][i] - beta * v[k - 1][i] - alpha * v[k][i];
 		}
-		for (int l = 0; l < k - 2; l++) {
-			double coeff = dot_product(v[l], v[k + 1], mat_dim);
-			for (int i = 0; i < mat_dim; i++) {
-				v[k + 1][i] -= v[l][i] * coeff;
+		printf("\n");
+
+		double neg_alpha = -alpha;
+		CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_alpha, v_k, 1, v_next, 1), cleanup);
+		if (k > 0) {
+			double neg_beta_prev = -beta_prev;
+			CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_beta_prev, v_prev, 1, v_next, 1), cleanup);
+		}
+
+		if (k > 2) {
+			for (int j = 0; j < k - 2; j++) {
+				double *v_j = d_V + (size_t)j * vec_stride;
+				double coeff = 0.0;
+				CHECK_CUBLAS_GOTO(cublasDdot(blas_handle, mat_dim, v_j, 1, v_next, 1, &coeff), cleanup);
+				double neg_coeff = -coeff;
+				CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_coeff, v_j, 1, v_next, 1), cleanup);
 			}
 		}
-		double beta_next = sqrt(dot_product(v[k + 1], v[k + 1], mat_dim));
-		if (beta_next * beta_next <
-			threshold * threshold * threshold * threshold) {
+
+		double beta_next = 0.0;
+		CHECK_CUBLAS_GOTO(cublasDnrm2(blas_handle, mat_dim, v_next, 1, &beta_next), cleanup);
+
+		if (beta_next * beta_next < threshold_sq * threshold_sq) {
 			printf("%.7f beta converged\n", beta_next);
 			status = EXIT_SUCCESS;
 			goto cleanup;
 		}
-		for (int i = 0; i < mat_dim; i++) {
-			v[k + 1][i] /= beta_next;
+
+		if (beta_next == 0.0) {
+			printf("beta became zero\n");
+			status = EXIT_SUCCESS;
+			goto cleanup;
 		}
-		tmat[k][k + 1] = beta_next;
-		tmat[k + 1][k] = beta_next;
-		beta = beta_next;
+
+		double inv_beta = 1.0 / beta_next;
+		CHECK_CUBLAS_GOTO(cublasDscal(blas_handle, mat_dim, &inv_beta, v_next, 1), cleanup);
+
+		if (k + 1 < ld) {
+			H_T(k, k + 1) = beta_next;
+			H_T(k + 1, k) = beta_next;
+		}
+
+		beta_prev = beta_next;
 	}
 
 	status = EXIT_SUCCESS;
@@ -196,33 +437,42 @@ cleanup:
 	if (vecY != NULL) {
 		cusparseDestroyDnVec(vecY);
 	}
-	if (dVecIn != NULL) {
-		cudaFree(dVecIn);
+	if (sp_handle != NULL) {
+		cusparseDestroy(sp_handle);
 	}
-	if (dVecOut != NULL) {
-		cudaFree(dVecOut);
+	if (blas_handle != NULL) {
+		cublasDestroy(blas_handle);
 	}
-	if (tmat != NULL) {
-		for (int i = 0; i < max_iter; i++) {
-			free(tmat[i]);
-		}
-		free(tmat);
+	if (solver_handle != NULL) {
+		cusolverDnDestroy(solver_handle);
 	}
-	if (v != NULL) {
-		for (int i = 0; i < max_iter; i++) {
-			free(v[i]);
-		}
-		free(v);
+	if (rng != NULL) {
+		curandDestroyGenerator(rng);
 	}
-	if (allocated_eigenvectors && eigenvectors != NULL) {
-		for (int i = 0; i < mat_dim; i++) {
-			free(eigenvectors[i]);
-		}
-		free(eigenvectors);
+	if (d_buffer != NULL) {
+		cudaFree(d_buffer);
 	}
+	if (d_V != NULL) {
+		cudaFree(d_V);
+	}
+	if (d_T != NULL) {
+		cudaFree(d_T);
+	}
+	if (d_W != NULL) {
+		cudaFree(d_W);
+	}
+	if (d_work != NULL) {
+		cudaFree(d_work);
+	}
+	if (d_info != NULL) {
+		cudaFree(d_info);
+	}
+	if (d_random != NULL) {
+		cudaFree(d_random);
+	}
+	free(h_T);
 	free(teval_last);
-	if (matA != NULL) {
-		cusparseDestroySpMat(matA);
-	}
+	destroy_cusparse_matrix(&matA);
+#undef H_T
 	return status;
 }
