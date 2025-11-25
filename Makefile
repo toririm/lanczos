@@ -1,7 +1,7 @@
-CC			:= icx
+CC			:= nvcc
 DEPFLAGS	 = -MT $@ -MMD -MF $(OUTDIR)/$*.d
-CFLAGS		:= -std=c11 -Wall -O3 -qopenmp
-LDFLAGS 	:= -lmkl_rt
+CFLAGS		:= -O3 -Xcompiler -fopenmp
+LDFLAGS 	:= -lmkl_rt -lcusparse -lcublas -lcusolver -lcurand
 
 SRCDIR		:= src
 OUTDIR		:= build

@@ -1,4 +1,5 @@
 #include "coo.h"
+#pragma once
 
 typedef struct crs {
     double  *values;
