@@ -7,7 +7,7 @@
 #include "crs.h"
 #include "util.h"
 #include "lanczos.h"
-#include "lanczos_cusparse.h"
+#include "lanczos_cuda.h"
 
 #define number_of_eigenvalues 5
 #define buf_size 1000

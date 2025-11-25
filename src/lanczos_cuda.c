@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include "util.h"
-#include "lanczos_cusparse.h"
+#include "lanczos_cuda.h"
 
 static inline size_t round_up_even(size_t value) {
 	return (value % 2 == 0) ? value : value + 1;
