@@ -26,7 +26,8 @@
 extern int create_cusparse_matrix(const Mat_Crs *src, cusparseSpMatDescr_t *dist);
 
 extern int matvec_cusparse_crs(const cusparseSpMatDescr_t *mat, int dimension,
-						       const double *vec, double *dist);
+						       const cusparseDnVecDescr_t *vec,
+                               cusparseDnVecDescr_t *dist);
 
 extern int lanczos_cusparse_crs(const Mat_Crs *mat,
                                  double eigenvalues[], double *eigenvectors[],
