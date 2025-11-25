@@ -119,7 +119,7 @@ void destroy_cusparse_matrix(CuSparseMatrix *mat) {
 	memset(mat, 0, sizeof(*mat));
 }
 
-int lanczos_cusparse_crs(const Mat_Crs *mat,
+int lanczos_cuda_crs(const Mat_Crs *mat,
 			  double eigenvalues[], double *eigenvectors[],
 			  int nth_eig, int max_iter, double threshold) {
 	(void)eigenvectors;

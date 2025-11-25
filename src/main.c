@@ -57,8 +57,8 @@ int main(int argc, const char *argv[]) {
 		MEASURE(convert_from_coo,
 			mat_crs = convert_from_coo(&mat, 1);
 		);
-		MEASURE(lanczos_cusparse_crs,
-			lanczos_cusparse_crs(&mat_crs, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+		MEASURE(lanczos_cuda_crs,
+			lanczos_cuda_crs(&mat_crs, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 		);
 	} else {
 		printf("[MODE] COO selected\n");

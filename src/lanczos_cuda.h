@@ -119,6 +119,6 @@ typedef struct {
 extern int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist);
 extern void destroy_cusparse_matrix(CuSparseMatrix *mat);
 
-extern int lanczos_cusparse_crs(const Mat_Crs *mat,
+extern int lanczos_cuda_crs(const Mat_Crs *mat,
                                  double eigenvalues[], double *eigenvectors[],
                                  int nth_eig, int max_iter, double threshold);
