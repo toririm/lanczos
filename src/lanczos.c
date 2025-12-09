@@ -26,24 +26,35 @@ void lanczos(const Mat_Matvec mat_matvec,
 		eigenvectors[i] = calloc(mat_dim, sizeof(double));
 	}
 	teval_last = calloc(mat_dim, sizeof(double));
-	
-	gaussian_random_vec(mat_dim, v[1]);
-
-	norm = sqrt(dot_product(v[1], v[1], mat_dim));
-	for (int i = 0; i < mat_dim; i++) {
-		v[1][i] = 1.0 / norm * v[1][i];
+	for (int i = 0; i < nth_eig; i++) {
+		eigenvalues[i] = 0.0;
 	}
 
-	for (int k = 1; k < max_iter - 1; k++) {
+	/* 0-based indexing: v[0] is the initial vector */
+	gaussian_random_vec(mat_dim, v[0]);
+
+	norm = sqrt(dot_product(v[0], v[0], mat_dim));
+	for (int i = 0; i < mat_dim; i++) {
+		v[0][i] = 1.0 / norm * v[0][i];
+	}
+
+	for (int k = 0; k < max_iter - 1; k++) {
+		int eval_count = k + 1;
+		if (eval_count > nth_eig) {
+			eval_count = nth_eig;
+		}
 		matvec(mat, v[k], v[k + 1]);
 		alpha = dot_product(v[k], v[k + 1], mat_dim);
 		tmat[k][k] = alpha;
-		for (int i = 0; i < nth_eig; i++) {
+		for (int i = 0; i < eval_count; i++) {
 			teval_last[i] = eigenvalues[i];
 		}
 		diagonalize_double(tmat, eigenvalues, eigenvectors, k + 1);
 		bool all = true;
-		for (int i = 0; i < nth_eig; i++) {
+		for (int i = eval_count; i < nth_eig; i++) {
+			eigenvalues[i] = 0.0; /* pad unused slots for display */
+		}
+		for (int i = 0; i < eval_count; i++) {
 			double diff = eigenvalues[i] - teval_last[i];
 			if (diff * diff > threshold * threshold) {
 				all = false;
@@ -56,14 +67,17 @@ void lanczos(const Mat_Matvec mat_matvec,
 			printf("\n");
 			return;
 		}
-		printf("%d\t", k);
-		for (int i = 0; i < nth_eig; i++)
+		printf("%d\t", k + 1);
+		for (int i = 0; i < nth_eig; i++) {
 			printf("%.7f\t", eigenvalues[i]);
-		printf("\n");
-		for (int i = 0; i < mat_dim; i++) {
-			v[k + 1][i] = v[k + 1][i] - beta * v[k - 1][i] - alpha * v[k][i];
 		}
-		for (int l = 0; l < k - 2; l++) {
+		printf("\n");
+
+		for (int i = 0; i < mat_dim; i++) {
+			double prev = (k == 0) ? 0.0 : v[k - 1][i];
+			v[k + 1][i] = v[k + 1][i] - beta * prev - alpha * v[k][i];
+		}
+		for (int l = 0; l < k; l++) { /* reorthogonalize to all previous basis */
 			double coeff = dot_product(v[l], v[k + 1], mat_dim);
 			for (int i = 0; i < mat_dim; i++) {
 				v[k + 1][i] -= v[l][i] * coeff;
