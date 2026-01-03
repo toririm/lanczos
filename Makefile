@@ -1,7 +1,7 @@
 CC			:= nvcc
 DEPFLAGS	 = -MT $@ -MMD -MF $(OUTDIR)/$*.d
 CFLAGS		:= -O3 -Xcompiler -fopenmp
-LDFLAGS 	:= -lmkl_rt -lcusparse -lcublas -lcusolver -lcurand
+LDFLAGS 	:= -lcusparse -lcublas -lcusolver -lcurand -llapack -lblas -lopenblas
 
 SRCDIR		:= src
 OUTDIR		:= build

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include <mkl_lapacke.h>
+#include <openblas/lapacke.h>
 #include "util.h"
 
 char *read_from_file(const char *filepath) {
@@ -69,13 +69,15 @@ void diagonalize_double(double **symmetric_matrix, double *eigenvalues, double *
     exit(1);
   }
 
+  // Use column-major here to match the CUDA path (cuSOLVER expects column-major)
+  // and to keep the eigenvector convention as "columns are eigenvectors".
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      u_flat[i * n + j] = symmetric_matrix[i][j];
+      u_flat[(size_t)j * (size_t)n + (size_t)i] = symmetric_matrix[i][j];
     }
   }
   
-  int info = LAPACKE_dsyev(LAPACK_ROW_MAJOR, 'V', 'U', n, u_flat, n, eigenvalues);
+  int info = LAPACKE_dsyev(LAPACK_COL_MAJOR, 'V', 'U', n, u_flat, n, eigenvalues);
   
   if (info != 0) {
     fprintf(stderr, "diagonalize error in diagonalize_double. info = %d\n", info);
@@ -83,16 +85,16 @@ void diagonalize_double(double **symmetric_matrix, double *eigenvalues, double *
   }
 
   for (int j = 0; j < n; j++) {
-    if (u_flat[j] < 0.0) {
+    if (u_flat[(size_t)j * (size_t)n] < 0.0) {
       for (int i = 0; i < n; i++) {
-        u_flat[i * n + j] *= -1.0;
+        u_flat[(size_t)j * (size_t)n + (size_t)i] *= -1.0;
       }
     }
   }
 
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
-      eigenvectors[i][j] = u_flat[i * n + j];
+      eigenvectors[i][j] = u_flat[(size_t)j * (size_t)n + (size_t)i];
     }
   }
     
