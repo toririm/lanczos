@@ -43,6 +43,8 @@ int main(int argc, const char *argv[]) {
 	);
 
 	printf("mat dim: %d\n", mat.dimension);
+	printf("mat num-of-non-zero: %d\n", mat.length);
+	printf("sparsity: %f\n", ((double)mat.length / ((double)mat.dimension * (double)mat.dimension)));
 
 	if (mat_type == CRS) {
 		printf("[MODE] CRS selected\n");
