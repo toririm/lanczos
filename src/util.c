@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include <openblas/lapacke.h>
+#include <mkl_lapacke.h>
 #include "util.h"
 
 char *read_from_file(const char *filepath) {
