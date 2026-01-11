@@ -39,7 +39,7 @@ int main(int argc, const char *argv[]) {
 	}
 
 	MEASURE(read_mat,
-		mat = read_mat_coo(filename);
+		mat = read_mat_coo_incremental(filename);
 	);
 
 	printf("mat dim: %d\n", mat.dimension);

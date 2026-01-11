@@ -96,6 +96,133 @@ Mat_Coo read_mat_coo(const char *filepath) {
 	return ret;
 }
 
+Mat_Coo read_mat_coo_incremental(const char *filepath) {
+	FILE *fp;
+	Coo *entries = NULL;
+	int allocated_entries = 0;
+	int line_count = 0;
+	int mat_dim = 0;
+
+	char chunk[BUFSIZ];
+	char *linebuf = NULL;
+	size_t linebuf_cap = 0;
+	size_t linebuf_len = 0;
+
+	fp = fopen(filepath, "r");
+	if (fp == NULL) {
+		perror("fopen");
+		exit(EXIT_FAILURE);
+	}
+
+	while (fgets(chunk, sizeof(chunk), fp) != NULL) {
+		size_t chunk_len = strlen(chunk);
+		size_t needed = linebuf_len + chunk_len + 1;
+
+		if (linebuf_cap < needed) {
+			size_t new_cap = linebuf_cap;
+			if (new_cap == 0) new_cap = BUFSIZ;
+			while (new_cap < needed) new_cap += BUFSIZ;
+			char *tmp = realloc(linebuf, new_cap);
+			if (tmp == NULL) {
+				fprintf(stderr, "realloc failed\n");
+				free(entries);
+				free(linebuf);
+				fclose(fp);
+				exit(EXIT_FAILURE);
+			}
+			linebuf = tmp;
+			linebuf_cap = new_cap;
+		}
+
+		memcpy(linebuf + linebuf_len, chunk, chunk_len + 1);
+		linebuf_len += chunk_len;
+
+		if (chunk_len > 0 && chunk[chunk_len - 1] == '\n') {
+			if (linebuf_len > 0 && linebuf[linebuf_len - 1] == '\n') {
+				linebuf[--linebuf_len] = '\0';
+			}
+
+			// strtok("\n") と同様に、空行(長さ0)だけスキップ
+			if (linebuf_len > 0) {
+				if (allocated_entries <= line_count) {
+					allocated_entries += BUFSIZ;
+					Coo *tmp = realloc(entries, sizeof(Coo) * allocated_entries);
+					if (tmp == NULL) {
+						fprintf(stderr, "realloc failed\n");
+						free(entries);
+						free(linebuf);
+						fclose(fp);
+						exit(EXIT_FAILURE);
+					}
+					entries = tmp;
+				}
+
+				parse_to_coo(linebuf, &entries[line_count]);
+				mat_dim = MAX(mat_dim, entries[line_count].index_row);
+				mat_dim = MAX(mat_dim, entries[line_count].index_column);
+				line_count++;
+			}
+
+			linebuf_len = 0;
+			if (linebuf_cap > 0) linebuf[0] = '\0';
+		}
+	}
+
+	if (ferror(fp)) {
+		perror("fgets");
+		free(entries);
+		free(linebuf);
+		fclose(fp);
+		exit(EXIT_FAILURE);
+	}
+
+	// 改行なし最終行の処理
+	if (linebuf_len > 0) {
+		if (allocated_entries <= line_count) {
+			allocated_entries += BUFSIZ;
+			Coo *tmp = realloc(entries, sizeof(Coo) * allocated_entries);
+			if (tmp == NULL) {
+				fprintf(stderr, "realloc failed\n");
+				free(entries);
+				free(linebuf);
+				fclose(fp);
+				exit(EXIT_FAILURE);
+			}
+			entries = tmp;
+		}
+		parse_to_coo(linebuf, &entries[line_count]);
+		mat_dim = MAX(mat_dim, entries[line_count].index_row);
+		mat_dim = MAX(mat_dim, entries[line_count].index_column);
+		line_count++;
+	}
+
+	free(linebuf);
+	fclose(fp);
+
+	if (line_count == 0) {
+		free(entries);
+		entries = NULL;
+	} else {
+		Coo *tmp = realloc(entries, sizeof(Coo) * line_count);
+		if (tmp == NULL) {
+			fprintf(stderr, "realloc failed\n");
+			free(entries);
+			exit(EXIT_FAILURE);
+		}
+		entries = tmp;
+	}
+
+	// 0-index to size
+	mat_dim++;
+
+	Mat_Coo ret = {
+		.data 		= entries,
+		.length		= line_count,
+		.dimension	= mat_dim,
+	};
+	return ret;
+}
+
 void matvec_coo(const Mat_Coo *mat, const double vec[], double *dist) {
 	for (int i = 0; i < mat->length; i++) {
 		Coo *entry = &(mat->data[i]);
