@@ -12,7 +12,10 @@ void lanczos(const Mat_Matvec mat_matvec,
     Matvec_General *matvec = mat_matvec.matvec;
     const int mat_dim = mat_matvec.dimension;
 	double **v, **tmat, *teval_last;
+	double **eigenvectors_work = NULL;
 	double norm, alpha, beta = 0;
+	(void)eigenvectors; /* CPU path currently does not return eigenvectors */
+
 	v = calloc(max_iter, sizeof(double *));
 	for (int i = 0; i < max_iter; i++) {
 		v[i] = calloc(mat_dim, sizeof(double));
@@ -21,11 +24,17 @@ void lanczos(const Mat_Matvec mat_matvec,
 	for (int i = 0; i < max_iter; i++) {
 		tmat[i] = calloc(max_iter, sizeof(double));
 	}
-	eigenvectors = calloc(mat_dim, sizeof(double *));
-	for (int i = 0; i < mat_dim; i++) {
-		eigenvectors[i] = calloc(mat_dim, sizeof(double));
+	/*
+	 * `diagonalize_double()` only needs eigenvectors of the (k+1)x(k+1)
+	 * tridiagonal matrix T, where (k+1) <= max_iter.
+	 * Allocating mat_dim x mat_dim here is unnecessary and can OOM.
+	 */
+	eigenvectors_work = calloc(max_iter, sizeof(double *));
+	for (int i = 0; i < max_iter; i++) {
+		eigenvectors_work[i] = calloc(max_iter, sizeof(double));
 	}
-	teval_last = calloc(mat_dim, sizeof(double));
+
+	teval_last = calloc(nth_eig, sizeof(double));
 	for (int i = 0; i < nth_eig; i++) {
 		eigenvalues[i] = 0.0;
 	}
@@ -46,10 +55,10 @@ void lanczos(const Mat_Matvec mat_matvec,
 		matvec(mat, v[k], v[k + 1]);
 		alpha = dot_product(v[k], v[k + 1], mat_dim);
 		tmat[k][k] = alpha;
-		for (int i = 0; i < eval_count; i++) {
+		for (int i = 0; i < nth_eig; i++) {
 			teval_last[i] = eigenvalues[i];
 		}
-		diagonalize_double(tmat, eigenvalues, eigenvectors, k + 1);
+		diagonalize_double(tmat, eigenvalues, eigenvectors_work, k + 1);
 		bool all = true;
 		for (int i = eval_count; i < nth_eig; i++) {
 			eigenvalues[i] = 0.0; /* pad unused slots for display */
@@ -65,7 +74,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 			for (int i = 0; i < nth_eig; i++)
 				printf("%.1E ", teval_last[i] - eigenvalues[i]);
 			printf("\n");
-			return;
+			goto cleanup;
 		}
 		printf("%d\t", k + 1);
 		for (int i = 0; i < nth_eig; i++) {
@@ -86,12 +95,35 @@ void lanczos(const Mat_Matvec mat_matvec,
 		beta = sqrt(dot_product(v[k + 1], v[k + 1], mat_dim));
 		if (beta * beta < threshold * threshold * threshold * threshold) {
 			printf("%.7f beta converged\n", beta);
-			return;
+			goto cleanup;
 		}
 		for (int i = 0; i < mat_dim; i++) {
 			v[k + 1][i] /= beta;
 		}
 		tmat[k][k + 1] = beta;
 		tmat[k + 1][k] = beta;
+	}
+
+cleanup:
+	if (teval_last != NULL) {
+		free(teval_last);
+	}
+	if (eigenvectors_work != NULL) {
+		for (int i = 0; i < max_iter; i++) {
+			free(eigenvectors_work[i]);
+		}
+		free(eigenvectors_work);
+	}
+	if (tmat != NULL) {
+		for (int i = 0; i < max_iter; i++) {
+			free(tmat[i]);
+		}
+		free(tmat);
+	}
+	if (v != NULL) {
+		for (int i = 0; i < max_iter; i++) {
+			free(v[i]);
+		}
+		free(v);
 	}
 }

@@ -81,6 +81,7 @@ void diagonalize_double(double **symmetric_matrix, double *eigenvalues, double *
   
   if (info != 0) {
     fprintf(stderr, "diagonalize error in diagonalize_double. info = %d\n", info);
+  	free(u_flat);
     exit(1);
   }
 

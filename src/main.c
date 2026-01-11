@@ -51,6 +51,7 @@ int main(int argc, const char *argv[]) {
 		MEASURE(convert_from_coo,
 			mat_crs = convert_from_coo(&mat, 1);
 		);
+		free(mat.data);
 		MEASURE(lanczos,
 			lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 		);
@@ -59,6 +60,7 @@ int main(int argc, const char *argv[]) {
 		MEASURE(convert_from_coo,
 			mat_crs = convert_from_coo(&mat, 1);
 		);
+		free(mat.data);
 		MEASURE(lanczos_cuda_crs,
 			lanczos_cuda_crs(&mat_crs, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
 		);
