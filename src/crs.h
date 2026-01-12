@@ -3,21 +3,21 @@
 
 typedef struct crs {
     double  *values;
-    int     *column_index;
+    size_t     *column_index;
     /**
      * 各行の最初の非ゼロ要素を value の index で格納
      * 長さは dimension + 1
      * row_head_indexes[dimension] = length
      */
-    int     *row_head_indxes;
+    size_t     *row_head_indexes;
     /**
      * value, column_index の長さ
      */
-    int     length;
+    size_t     length;
     /**
      * 正方行列の次元数、行数
      */
-    int     dimension;
+    size_t     dimension;
 } Mat_Crs;
 
 extern Mat_Crs convert_from_coo(const Mat_Coo *mat_coo, int swap_row_column);

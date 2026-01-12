@@ -10,7 +10,7 @@ typedef void Matvec_General(const void *mat, const double *vec, double *dist);
 typedef struct mat_matvec {
     void            *mat;
     Matvec_General  *matvec;
-    int             dimension;
+    size_t           dimension;
 } Mat_Matvec;
 
 /**

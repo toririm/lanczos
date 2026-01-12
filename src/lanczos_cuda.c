@@ -49,7 +49,7 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 		return EXIT_FAILURE;
 	}
 
-	cuda_status = cudaMemcpy(dist->d_row_offsets, src->row_head_indxes,
+	cuda_status = cudaMemcpy(dist->d_row_offsets, src->row_head_indexes,
 							 (size_t)(dist->rows + 1) * sizeof(int),
 							 cudaMemcpyHostToDevice);
 	if (cuda_status != cudaSuccess) {

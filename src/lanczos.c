@@ -10,7 +10,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 			 int nth_eig, int max_iter, double threshold) {
     const void *mat = mat_matvec.mat;
     Matvec_General *matvec = mat_matvec.matvec;
-    const int mat_dim = mat_matvec.dimension;
+    const size_t mat_dim = mat_matvec.dimension;
 	double **v, **tmat, *teval_last;
 	double **eigenvectors_work = NULL;
 	double norm, alpha, beta = 0;
@@ -82,7 +82,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 		}
 		printf("\n");
 
-		for (int i = 0; i < mat_dim; i++) {
+		for (size_t i = 0; i < mat_dim; i++) {
 			double prev = (k == 0) ? 0.0 : v[k - 1][i];
 			v[k + 1][i] = v[k + 1][i] - beta * prev - alpha * v[k][i];
 		}
@@ -97,7 +97,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 			printf("%.7f beta converged\n", beta);
 			goto cleanup;
 		}
-		for (int i = 0; i < mat_dim; i++) {
+		for (size_t i = 0; i < mat_dim; i++) {
 			v[k + 1][i] /= beta;
 		}
 		tmat[k][k + 1] = beta;

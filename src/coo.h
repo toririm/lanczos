@@ -8,8 +8,8 @@ typedef struct coo {
 
 typedef struct mat_coo {
 	Coo		*data;
-	int 	length;
-	int 	dimension;
+	size_t 	length;
+	size_t 	dimension;
 } Mat_Coo;
 
 extern void parse_to_coo(char *src_str, Coo *dist);
