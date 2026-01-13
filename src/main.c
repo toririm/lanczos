@@ -42,8 +42,8 @@ int main(int argc, const char *argv[]) {
 		mat = read_mat_coo_incremental(filename);
 	);
 
-	printf("mat dim: %d\n", mat.dimension);
-	printf("mat num-of-non-zero: %d\n", mat.length);
+	printf("mat dim: %ld\n", mat.dimension);
+	printf("mat num-of-non-zero: %ld\n", mat.length);
 	printf("sparsity: %f\n", ((double)mat.length / ((double)mat.dimension * (double)mat.dimension)));
 
 	if (mat_type == CRS) {
