@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <limits.h>
 #include "util.h"
 #include "lanczos.h"
 
@@ -16,25 +17,70 @@ void lanczos(const Mat_Matvec mat_matvec,
 	double norm, alpha, beta = 0;
 	(void)eigenvectors; /* CPU path currently does not return eigenvectors */
 
-	v = calloc(max_iter, sizeof(double *));
+	if (mat == NULL || matvec == NULL || eigenvalues == NULL) {
+		fprintf(stderr, "lanczos: NULL argument\n");
+		exit(EXIT_FAILURE);
+	}
+	if (max_iter < 2 || nth_eig < 1) {
+		fprintf(stderr, "lanczos: invalid parameters (nth_eig=%d, max_iter=%d)\n", nth_eig, max_iter);
+		exit(EXIT_FAILURE);
+	}
+	if (mat_dim == 0) {
+		fprintf(stderr, "lanczos: mat_dim is 0\n");
+		exit(EXIT_FAILURE);
+	}
+	if (mat_dim > (size_t)INT_MAX) {
+		fprintf(stderr, "lanczos: mat_dim=%zu exceeds INT_MAX (util routines use int)\n", mat_dim);
+		exit(EXIT_FAILURE);
+	}
+
+	v = calloc((size_t)max_iter, sizeof(double *));
+	if (v == NULL) {
+		fprintf(stderr, "lanczos: allocation failed (v pointers)\n");
+		exit(EXIT_FAILURE);
+	}
 	for (int i = 0; i < max_iter; i++) {
 		v[i] = calloc(mat_dim, sizeof(double));
+		if (v[i] == NULL) {
+			fprintf(stderr, "lanczos: allocation failed (v[%d], dim=%zu)\n", i, mat_dim);
+			goto cleanup;
+		}
 	}
-	tmat = calloc(max_iter, sizeof(double *));
+	tmat = calloc((size_t)max_iter, sizeof(double *));
+	if (tmat == NULL) {
+		fprintf(stderr, "lanczos: allocation failed (tmat pointers)\n");
+		goto cleanup;
+	}
 	for (int i = 0; i < max_iter; i++) {
-		tmat[i] = calloc(max_iter, sizeof(double));
+		tmat[i] = calloc((size_t)max_iter, sizeof(double));
+		if (tmat[i] == NULL) {
+			fprintf(stderr, "lanczos: allocation failed (tmat[%d], max_iter=%d)\n", i, max_iter);
+			goto cleanup;
+		}
 	}
 	/*
 	 * `diagonalize_double()` only needs eigenvectors of the (k+1)x(k+1)
 	 * tridiagonal matrix T, where (k+1) <= max_iter.
 	 * Allocating mat_dim x mat_dim here is unnecessary and can OOM.
 	 */
-	eigenvectors_work = calloc(max_iter, sizeof(double *));
+	eigenvectors_work = calloc((size_t)max_iter, sizeof(double *));
+	if (eigenvectors_work == NULL) {
+		fprintf(stderr, "lanczos: allocation failed (eigenvectors_work pointers)\n");
+		goto cleanup;
+	}
 	for (int i = 0; i < max_iter; i++) {
-		eigenvectors_work[i] = calloc(max_iter, sizeof(double));
+		eigenvectors_work[i] = calloc((size_t)max_iter, sizeof(double));
+		if (eigenvectors_work[i] == NULL) {
+			fprintf(stderr, "lanczos: allocation failed (eigenvectors_work[%d])\n", i);
+			goto cleanup;
+		}
 	}
 
-	teval_last = calloc(nth_eig, sizeof(double));
+	teval_last = calloc((size_t)nth_eig, sizeof(double));
+	if (teval_last == NULL) {
+		fprintf(stderr, "lanczos: allocation failed (teval_last)\n");
+		goto cleanup;
+	}
 	for (int i = 0; i < nth_eig; i++) {
 		eigenvalues[i] = 0.0;
 	}

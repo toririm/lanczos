@@ -269,6 +269,13 @@ Mat_Coo read_mat_coo_incremental(const char *filepath) {
 }
 
 void matvec_coo(const Mat_Coo *mat, const double vec[], double *dist) {
+	if (mat == NULL || vec == NULL || dist == NULL) {
+		fprintf(stderr, "matvec_coo: NULL argument\n");
+		exit(EXIT_FAILURE);
+	}
+	for (size_t i = 0; i < mat->dimension; i++) {
+		dist[i] = 0.0;
+	}
 	for (size_t i = 0; i < mat->length; i++) {
 		Coo *entry = &(mat->data[i]);
 		dist[entry->index_row] += entry->value * vec[entry->index_column];
