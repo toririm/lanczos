@@ -2,6 +2,8 @@
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
+#include <limits.h>
+#include <stdlib.h>
 #include "util.h"
 #include "lanczos_cuda.h"
 
@@ -16,9 +18,55 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 
 	memset(dist, 0, sizeof(*dist));
 
-	dist->rows = src->dimension;
-	dist->cols = src->dimension;
-	dist->nnz  = src->length;
+	if (src->dimension > (size_t)INT_MAX || src->length > (size_t)INT_MAX) {
+		printf("Matrix too large for int CSR (dim=%zu, nnz=%zu)\n",
+		       src->dimension, src->length);
+		return EXIT_FAILURE;
+	}
+
+	dist->rows = (int)src->dimension;
+	dist->cols = (int)src->dimension;
+	dist->nnz  = (int)src->length;
+
+	int *h_row_offsets = NULL;
+	int *h_columns = NULL;
+
+	h_row_offsets = (int*)malloc((size_t)(dist->rows + 1) * sizeof(int));
+	h_columns = (int*)malloc((size_t)dist->nnz * sizeof(int));
+	if (h_row_offsets == NULL || (dist->nnz > 0 && h_columns == NULL)) {
+		printf("Failed to allocate host CSR buffers\n");
+		free(h_row_offsets);
+		free(h_columns);
+		return EXIT_FAILURE;
+	}
+
+	for (int i = 0; i <= dist->rows; i++) {
+		size_t v = src->row_head_indexes[(size_t)i];
+		if (v > (size_t)INT_MAX) {
+			printf("CSR row offset out of int range at i=%d (value=%zu)\n", i, v);
+			free(h_row_offsets);
+			free(h_columns);
+			return EXIT_FAILURE;
+		}
+		h_row_offsets[i] = (int)v;
+	}
+	for (int j = 0; j < dist->nnz; j++) {
+		size_t c = src->column_index[(size_t)j];
+		if (c > (size_t)INT_MAX) {
+			printf("CSR column index out of int range at j=%d (value=%zu)\n", j, c);
+			free(h_row_offsets);
+			free(h_columns);
+			return EXIT_FAILURE;
+		}
+		h_columns[j] = (int)c;
+	}
+	if (h_row_offsets[0] != 0 || h_row_offsets[dist->rows] != dist->nnz) {
+		printf("CSR row offsets look invalid: row0=%d rowN=%d nnz=%d\n",
+		       h_row_offsets[0], h_row_offsets[dist->rows], dist->nnz);
+		free(h_row_offsets);
+		free(h_columns);
+		return EXIT_FAILURE;
+	}
 
 	cudaError_t cuda_status;
 
@@ -26,6 +74,8 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 							 (size_t)(dist->rows + 1) * sizeof(int));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
+		free(h_row_offsets);
+		free(h_columns);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
@@ -35,6 +85,8 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 							 (size_t)dist->nnz * sizeof(int));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
+		free(h_row_offsets);
+		free(h_columns);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
@@ -44,30 +96,39 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 							 (size_t)dist->nnz * sizeof(double));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
+		free(h_row_offsets);
+		free(h_columns);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
 
-	cuda_status = cudaMemcpy(dist->d_row_offsets, src->row_head_indexes,
+	cuda_status = cudaMemcpy(dist->d_row_offsets, h_row_offsets,
 							 (size_t)(dist->rows + 1) * sizeof(int),
 							 cudaMemcpyHostToDevice);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
+		free(h_row_offsets);
+		free(h_columns);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
 
-	cuda_status = cudaMemcpy(dist->d_columns, src->column_index,
+	cuda_status = cudaMemcpy(dist->d_columns, h_columns,
 							 (size_t)dist->nnz * sizeof(int),
 							 cudaMemcpyHostToDevice);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
+		free(h_row_offsets);
+		free(h_columns);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
+
+	free(h_row_offsets);
+	free(h_columns);
 
 	cuda_status = cudaMemcpy(dist->d_values, src->values,
 							 (size_t)dist->nnz * sizeof(double),
@@ -125,6 +186,11 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	(void)eigenvectors;
 
 	if (mat == NULL || eigenvalues == NULL) {
+		return EXIT_FAILURE;
+	}
+	if (mat->dimension > (size_t)INT_MAX || mat->length > (size_t)INT_MAX) {
+		printf("Matrix too large for CUDA CRS (dim=%zu, nnz=%zu)\n",
+		       mat->dimension, mat->length);
 		return EXIT_FAILURE;
 	}
 
