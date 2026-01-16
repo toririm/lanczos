@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <string.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
 #include "util.h"
@@ -18,21 +19,24 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 
 	memset(dist, 0, sizeof(*dist));
 
-	if (src->dimension > (size_t)INT_MAX || src->length > (size_t)INT_MAX) {
-		printf("Matrix too large for int CSR (dim=%zu, nnz=%zu)\n",
-		       src->dimension, src->length);
+	if (src->dimension > (size_t)INT_MAX) {
+		printf("Matrix dimension too large for CUDA path (dim=%zu)\n", src->dimension);
+		return EXIT_FAILURE;
+	}
+	if (src->length > (size_t)INT64_MAX) {
+		printf("Matrix nnz too large for cuSPARSE (nnz=%zu)\n", src->length);
 		return EXIT_FAILURE;
 	}
 
 	dist->rows = (int)src->dimension;
 	dist->cols = (int)src->dimension;
-	dist->nnz  = (int)src->length;
+	dist->nnz  = src->length;
 
-	int *h_row_offsets = NULL;
-	int *h_columns = NULL;
+	int64_t *h_row_offsets = NULL;
+	int64_t *h_columns = NULL;
 
-	h_row_offsets = (int*)malloc((size_t)(dist->rows + 1) * sizeof(int));
-	h_columns = (int*)malloc((size_t)dist->nnz * sizeof(int));
+	h_row_offsets = (int64_t*)malloc((size_t)(dist->rows + 1) * sizeof(int64_t));
+	h_columns = (int64_t*)malloc(dist->nnz * sizeof(int64_t));
 	if (h_row_offsets == NULL || (dist->nnz > 0 && h_columns == NULL)) {
 		printf("Failed to allocate host CSR buffers\n");
 		free(h_row_offsets);
@@ -42,26 +46,26 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 
 	for (int i = 0; i <= dist->rows; i++) {
 		size_t v = src->row_head_indexes[(size_t)i];
-		if (v > (size_t)INT_MAX) {
-			printf("CSR row offset out of int range at i=%d (value=%zu)\n", i, v);
+		if (v > (size_t)INT64_MAX) {
+			printf("CSR row offset out of int64 range at i=%d (value=%zu)\n", i, v);
 			free(h_row_offsets);
 			free(h_columns);
 			return EXIT_FAILURE;
 		}
-		h_row_offsets[i] = (int)v;
+		h_row_offsets[i] = (int64_t)v;
 	}
-	for (int j = 0; j < dist->nnz; j++) {
-		size_t c = src->column_index[(size_t)j];
-		if (c > (size_t)INT_MAX) {
-			printf("CSR column index out of int range at j=%d (value=%zu)\n", j, c);
+	for (size_t j = 0; j < dist->nnz; j++) {
+		size_t c = src->column_index[j];
+		if (c > (size_t)INT64_MAX) {
+			printf("CSR column index out of int64 range at j=%zu (value=%zu)\n", j, c);
 			free(h_row_offsets);
 			free(h_columns);
 			return EXIT_FAILURE;
 		}
-		h_columns[j] = (int)c;
+		h_columns[j] = (int64_t)c;
 	}
-	if (h_row_offsets[0] != 0 || h_row_offsets[dist->rows] != dist->nnz) {
-		printf("CSR row offsets look invalid: row0=%d rowN=%d nnz=%d\n",
+	if (h_row_offsets[0] != 0 || h_row_offsets[dist->rows] != (int64_t)dist->nnz) {
+		printf("CSR row offsets look invalid: row0=%" PRId64 " rowN=%" PRId64 " nnz=%zu\n",
 		       h_row_offsets[0], h_row_offsets[dist->rows], dist->nnz);
 		free(h_row_offsets);
 		free(h_columns);
@@ -71,7 +75,7 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 	cudaError_t cuda_status;
 
 	cuda_status = cudaMalloc((void**) &dist->d_row_offsets,
-							 (size_t)(dist->rows + 1) * sizeof(int));
+						 (size_t)(dist->rows + 1) * sizeof(int64_t));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
 		free(h_row_offsets);
@@ -82,7 +86,7 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 	}
 
 	cuda_status = cudaMalloc((void**) &dist->d_columns,
-							 (size_t)dist->nnz * sizeof(int));
+						 dist->nnz * sizeof(int64_t));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
 		free(h_row_offsets);
@@ -104,7 +108,7 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 	}
 
 	cuda_status = cudaMemcpy(dist->d_row_offsets, h_row_offsets,
-							 (size_t)(dist->rows + 1) * sizeof(int),
+						 (size_t)(dist->rows + 1) * sizeof(int64_t),
 							 cudaMemcpyHostToDevice);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
@@ -116,7 +120,7 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 	}
 
 	cuda_status = cudaMemcpy(dist->d_columns, h_columns,
-							 (size_t)dist->nnz * sizeof(int),
+						 dist->nnz * sizeof(int64_t),
 							 cudaMemcpyHostToDevice);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
@@ -131,7 +135,7 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 	free(h_columns);
 
 	cuda_status = cudaMemcpy(dist->d_values, src->values,
-							 (size_t)dist->nnz * sizeof(double),
+						 dist->nnz * sizeof(double),
 							 cudaMemcpyHostToDevice);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
@@ -140,15 +144,17 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 		return EXIT_FAILURE;
 	}
 
+	const int64_t nnz64 = (int64_t)dist->nnz;
+
 	cusparseStatus_t sparse_status = cusparseCreateCsr(&dist->descr,
-													   dist->rows,
-													   dist->cols,
-													   dist->nnz,
+											   (int64_t)dist->rows,
+											   (int64_t)dist->cols,
+											   nnz64,
 													   dist->d_row_offsets,
 													   dist->d_columns,
 													   dist->d_values,
-													   CUSPARSE_INDEX_32I,
-													   CUSPARSE_INDEX_32I,
+											   CUSPARSE_INDEX_64I,
+											   CUSPARSE_INDEX_64I,
 													   CUSPARSE_INDEX_BASE_ZERO,
 													   CUDA_R_64F);
 	if (sparse_status != CUSPARSE_STATUS_SUCCESS) {
@@ -188,9 +194,8 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	if (mat == NULL || eigenvalues == NULL) {
 		return EXIT_FAILURE;
 	}
-	if (mat->dimension > (size_t)INT_MAX || mat->length > (size_t)INT_MAX) {
-		printf("Matrix too large for CUDA CRS (dim=%zu, nnz=%zu)\n",
-		       mat->dimension, mat->length);
+	if (mat->dimension > (size_t)INT_MAX) {
+		printf("Matrix dimension too large for CUDA CRS (dim=%zu)\n", mat->dimension);
 		return EXIT_FAILURE;
 	}
 
@@ -286,6 +291,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 												CUDA_R_64F,
 												CUSPARSE_SPMV_ALG_DEFAULT,
 												&buffer_size), cleanup);
+	printf("[SpMV] buffer_size=%zu bytes\n", buffer_size);
 	if (buffer_size > 0) {
 		CHECK_CUDA_GOTO(cudaMalloc(&d_buffer, buffer_size), cleanup);
 	}

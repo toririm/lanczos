@@ -4,7 +4,24 @@
 #include <cusolverDn.h>
 #include <curand.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include "crs.h"
+
+static inline const char *cusparse_status_to_string(cusparseStatus_t status) {
+    switch (status) {
+        case CUSPARSE_STATUS_SUCCESS: return "CUSPARSE_STATUS_SUCCESS";
+        case CUSPARSE_STATUS_NOT_INITIALIZED: return "CUSPARSE_STATUS_NOT_INITIALIZED";
+        case CUSPARSE_STATUS_ALLOC_FAILED: return "CUSPARSE_STATUS_ALLOC_FAILED";
+        case CUSPARSE_STATUS_INVALID_VALUE: return "CUSPARSE_STATUS_INVALID_VALUE";
+        case CUSPARSE_STATUS_ARCH_MISMATCH: return "CUSPARSE_STATUS_ARCH_MISMATCH";
+        case CUSPARSE_STATUS_MAPPING_ERROR: return "CUSPARSE_STATUS_MAPPING_ERROR";
+        case CUSPARSE_STATUS_EXECUTION_FAILED: return "CUSPARSE_STATUS_EXECUTION_FAILED";
+        case CUSPARSE_STATUS_INTERNAL_ERROR: return "CUSPARSE_STATUS_INTERNAL_ERROR";
+        case CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED: return "CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
+        case CUSPARSE_STATUS_ZERO_PIVOT: return "CUSPARSE_STATUS_ZERO_PIVOT";
+        default: return "CUSPARSE_STATUS_<UNKNOWN>";
+    }
+}
 
 #define CHECK_CUDA(func)                                                       \
 {                                                                              \
@@ -20,8 +37,8 @@
 {                                                                              \
     cusparseStatus_t status = (func);                                          \
     if (status != CUSPARSE_STATUS_SUCCESS) {                                   \
-        printf("CUSPARSE API failed at line %d with error code: %d\n",         \
-               __LINE__, status);                                             \
+        printf("CUSPARSE API failed at line %d: %s -> %s (%d)\n",              \
+               __LINE__, #func, cusparse_status_to_string(status), (int)status);\
         return EXIT_FAILURE;                                                   \
     }                                                                          \
 }
@@ -70,8 +87,8 @@ do {                                                                           \
 do {                                                                           \
 	cusparseStatus_t status__ = (func);                                        \
 	if (status__ != CUSPARSE_STATUS_SUCCESS) {                                 \
-		printf("CUSPARSE API failed at line %d with error code: %d\n",         \
-			   __LINE__, status__);                                            \
+        printf("CUSPARSE API failed at line %d: %s -> %s (%d)\n",              \
+               __LINE__, #func, cusparse_status_to_string(status__), (int)status__);\
 		goto label;                                                            \
 	}                                                                          \
 } while (0)
@@ -108,12 +125,12 @@ do {                                                                           \
 
 typedef struct {
     cusparseSpMatDescr_t descr;
-    int *d_row_offsets;
-    int *d_columns;
+    int64_t *d_row_offsets;
+    int64_t *d_columns;
     double *d_values;
     int rows;
     int cols;
-    int nnz;
+    size_t nnz;
 } CuSparseMatrix;
 
 extern int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist);
