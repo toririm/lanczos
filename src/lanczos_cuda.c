@@ -5,6 +5,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <omp.h>
 #include "util.h"
 #include "lanczos_cuda.h"
 
@@ -191,6 +192,14 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 			  int nth_eig, int max_iter, double threshold) {
 	(void)eigenvectors;
 
+	double time_memcpy = 0.0;
+	double time_matvec = 0.0;
+	double time_diag   = 0.0;
+	double time_init   = 0.0;
+	double time_reorth = 0.0;
+
+	double __st = omp_get_wtime();
+
 	if (mat == NULL || eigenvalues == NULL) {
 		return EXIT_FAILURE;
 	}
@@ -317,6 +326,10 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 
 	double beta_prev = 0.0;
 
+	double __et = omp_get_wtime();
+
+	time_init = __et - __st;
+
 #define H_T(i, j) h_T[(size_t)(j) * (size_t)ld + (size_t)(i)]
 
 	for (int k = 0; k < max_iter - 1; k++) {
@@ -327,6 +340,8 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		CHECK_CUSPARSE_GOTO(cusparseDnVecSetValues(vecX, v_k), cleanup);
 		CHECK_CUSPARSE_GOTO(cusparseDnVecSetValues(vecY, v_next), cleanup);
 		CHECK_CUDA_GOTO(cudaMemset(v_next, 0, vec_stride * sizeof(double)), cleanup);
+
+		MEASURE_ACC(time_matvec,
 		CHECK_CUSPARSE_GOTO(cusparseSpMV(sp_handle,
 										 CUSPARSE_OPERATION_NON_TRANSPOSE,
 										 &alpha_spmv,
@@ -337,6 +352,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 										 CUDA_R_64F,
 										 CUSPARSE_SPMV_ALG_DEFAULT,
 										 d_buffer), cleanup);
+		);
 
 		double alpha = 0.0;
 		CHECK_CUBLAS_GOTO(cublasDdot(blas_handle, mat_dim, v_k, 1, v_next, 1, &alpha), cleanup);
@@ -353,6 +369,9 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 								   (size_t)ld * copy_cols * sizeof(double),
 								   cudaMemcpyHostToDevice),
 						cleanup);
+
+		// T_(k,k) の固有値と固有ベクトルを計算している
+		MEASURE_ACC(time_diag,
 		CHECK_CUSOLVER_GOTO(cusolverDnDsyevd(solver_handle,
 											 CUSOLVER_EIG_MODE_VECTOR,
 											 CUBLAS_FILL_MODE_UPPER,
@@ -364,19 +383,21 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 											 lwork,
 											 d_info),
 							cleanup);
+		);
 
+		MEASURE_ACC(time_memcpy,
 		int info_host = 0;
 		CHECK_CUDA_GOTO(cudaMemcpy(&info_host, d_info, sizeof(int), cudaMemcpyDeviceToHost), cleanup);
 		if (info_host != 0) {
 			printf("cuSOLVER Dsyevd failed with info = %d\n", info_host);
 			goto cleanup;
 		}
-
 		CHECK_CUDA_GOTO(cudaMemcpy(eigenvalues,
 								   d_W,
 								   (size_t)current_dim * sizeof(double),
 								   cudaMemcpyDeviceToHost),
 						cleanup);
+		);
 
 		bool converged = true;
 		if (current_dim < nth_eig) {
@@ -407,6 +428,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		}
 		printf("\n");
 
+		double __st_reorth = omp_get_wtime();
 		double neg_alpha = -alpha;
 		CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_alpha, v_k, 1, v_next, 1), cleanup);
 		if (k > 0) {
@@ -423,6 +445,8 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 				CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_coeff, v_j, 1, v_next, 1), cleanup);
 			}
 		}
+		double __et_reorth = omp_get_wtime();
+		time_reorth += __et_reorth - __st_reorth;
 
 		double beta_next = 0.0;
 		CHECK_CUBLAS_GOTO(cublasDnrm2(blas_handle, mat_dim, v_next, 1, &beta_next), cleanup);
@@ -496,5 +520,10 @@ cleanup:
 	free(teval_last);
 	destroy_cusparse_matrix(&matA);
 #undef H_T
+	fprintf(stderr, "Time spent in init:      %.6f sec\n", time_init);
+	fprintf(stderr, "Time spent in cudaMemcpy: %.6f sec\n", time_memcpy);
+	fprintf(stderr, "Time spent in SpMV:      %.6f sec\n", time_matvec);
+	fprintf(stderr, "Time spent in diagonalization: %.6f sec\n", time_diag);
+	fprintf(stderr, "Time spent in reorthogonalization: %.6f sec\n", time_reorth);
 	return status;
 }

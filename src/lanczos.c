@@ -17,6 +17,12 @@ void lanczos(const Mat_Matvec mat_matvec,
 	double norm, alpha, beta = 0;
 	(void)eigenvectors; /* CPU path currently does not return eigenvectors */
 
+	double time_init   = 0.0;
+	double time_matvec = 0.0;
+	double time_diag   = 0.0;
+	double time_reorth = 0.0;
+
+	double __st = omp_get_wtime();
 	if (mat == NULL || matvec == NULL || eigenvalues == NULL) {
 		fprintf(stderr, "lanczos: NULL argument\n");
 		exit(EXIT_FAILURE);
@@ -93,18 +99,26 @@ void lanczos(const Mat_Matvec mat_matvec,
 		v[0][i] = 1.0 / norm * v[0][i];
 	}
 
+	double __et = omp_get_wtime();
+
+	time_init = __et - __st;
+
 	for (int k = 0; k < max_iter - 1; k++) {
 		int eval_count = k + 1;
 		if (eval_count > nth_eig) {
 			eval_count = nth_eig;
 		}
+		MEASURE_ACC(time_matvec,
 		matvec(mat, v[k], v[k + 1]);
+		);
 		alpha = dot_product(v[k], v[k + 1], mat_dim);
 		tmat[k][k] = alpha;
 		for (int i = 0; i < nth_eig; i++) {
 			teval_last[i] = eigenvalues[i];
 		}
+		MEASURE_ACC(time_diag,
 		diagonalize_double(tmat, eigenvalues, eigenvectors_work, k + 1);
+		);
 		bool all = true;
 		for (int i = eval_count; i < nth_eig; i++) {
 			eigenvalues[i] = 0.0; /* pad unused slots for display */
@@ -128,21 +142,27 @@ void lanczos(const Mat_Matvec mat_matvec,
 		}
 		printf("\n");
 
+		double __st_reorth = omp_get_wtime();
+		#pragma omp parallel for
 		for (size_t i = 0; i < mat_dim; i++) {
 			double prev = (k == 0) ? 0.0 : v[k - 1][i];
 			v[k + 1][i] = v[k + 1][i] - beta * prev - alpha * v[k][i];
 		}
 		for (int l = 0; l < k; l++) { /* reorthogonalize to all previous basis */
 			double coeff = dot_product(v[l], v[k + 1], mat_dim);
+			#pragma omp parallel for
 			for (int i = 0; i < mat_dim; i++) {
 				v[k + 1][i] -= v[l][i] * coeff;
 			}
 		}
+		double __et_reorth = omp_get_wtime();
+		time_reorth += __et_reorth - __st_reorth;
 		beta = sqrt(dot_product(v[k + 1], v[k + 1], mat_dim));
 		if (beta * beta < threshold * threshold * threshold * threshold) {
 			printf("%.7f beta converged\n", beta);
 			goto cleanup;
 		}
+		#pragma omp parallel for
 		for (size_t i = 0; i < mat_dim; i++) {
 			v[k + 1][i] /= beta;
 		}
@@ -172,4 +192,8 @@ cleanup:
 		}
 		free(v);
 	}
+	fprintf(stderr, "Time spent in init:      %.6f sec\n", time_init);
+	fprintf(stderr, "Time spent in SpMV:      %.6f sec\n", time_matvec);
+	fprintf(stderr, "Time spent in diagonalization: %.6f sec\n", time_diag);
+	fprintf(stderr, "Time spent in reorthogonalization: %.6f sec\n", time_reorth);
 }
