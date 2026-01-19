@@ -158,10 +158,19 @@ void matvec_crs(const Mat_Crs *mat, const double vec[], double *dist) {
         exit(EXIT_FAILURE);
     }
 
-    #pragma omp parallel for
+    /*
+     * CRS SpMV is row-parallel and race-free. Keep optimization directive-only:
+     * - avoid OpenMP overhead for tiny problems via if(...)
+     * - make scheduling explicit (static tends to preserve locality)
+     * - encourage SIMD on the inner reduction loop
+     */
+    #pragma omp parallel for schedule(guided) if(mat->dimension >= 1024)
     for (size_t i = 0; i < mat->dimension; i++) {
         double sum = 0.0;
-        for (size_t j = mat->row_head_indexes[i]; j < mat->row_head_indexes[i + 1]; j++) {
+        const size_t j0 = mat->row_head_indexes[i];
+        const size_t j1 = mat->row_head_indexes[i + 1];
+        #pragma omp simd reduction(+:sum)
+        for (size_t j = j0; j < j1; j++) {
             sum += mat->values[j] * vec[mat->column_index[j]];
         }
         dist[i] = sum;
