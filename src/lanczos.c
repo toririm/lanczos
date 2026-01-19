@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <stdint.h>
 #include "util.h"
 #include "lanczos.h"
 
@@ -12,8 +13,10 @@ void lanczos(const Mat_Matvec mat_matvec,
     const void *mat = mat_matvec.mat;
     Matvec_General *matvec = mat_matvec.matvec;
     const size_t mat_dim = mat_matvec.dimension;
-	double **v, **tmat, *teval_last;
-	double **eigenvectors_work = NULL;
+	double *v = NULL;
+	double *tmat = NULL;
+	double *eigenvectors_work = NULL;
+	double *teval_last = NULL;
 	double norm, alpha, beta = 0;
 	(void)eigenvectors; /* CPU path currently does not return eigenvectors */
 
@@ -40,47 +43,42 @@ void lanczos(const Mat_Matvec mat_matvec,
 		exit(EXIT_FAILURE);
 	}
 
-	v = calloc((size_t)max_iter, sizeof(double *));
-	if (v == NULL) {
-		fprintf(stderr, "lanczos: allocation failed (v pointers)\n");
+	const int ld = max_iter;
+	const int mat_dim_i = (int)mat_dim;
+
+	if (mat_dim != 0 && (size_t)max_iter > SIZE_MAX / mat_dim) {
+		fprintf(stderr, "lanczos: allocation size overflow (v)\n");
 		exit(EXIT_FAILURE);
 	}
-	for (int i = 0; i < max_iter; i++) {
-		v[i] = calloc(mat_dim, sizeof(double));
-		if (v[i] == NULL) {
-			fprintf(stderr, "lanczos: allocation failed (v[%d], dim=%zu)\n", i, mat_dim);
-			goto cleanup;
-		}
+	if ((size_t)ld > 0 && (size_t)ld > SIZE_MAX / (size_t)ld) {
+		fprintf(stderr, "lanczos: allocation size overflow (ld)\n");
+		exit(EXIT_FAILURE);
 	}
-	tmat = calloc((size_t)max_iter, sizeof(double *));
+
+	const size_t v_elems = (size_t)max_iter * mat_dim;
+	const size_t t_elems = (size_t)ld * (size_t)ld;
+
+	v = calloc(v_elems, sizeof(double));
+	if (v == NULL) {
+		fprintf(stderr, "lanczos: allocation failed (v, elems=%zu)\n", v_elems);
+		exit(EXIT_FAILURE);
+	}
+	tmat = calloc(t_elems, sizeof(double));
 	if (tmat == NULL) {
-		fprintf(stderr, "lanczos: allocation failed (tmat pointers)\n");
+		fprintf(stderr, "lanczos: allocation failed (tmat, elems=%zu)\n", t_elems);
 		goto cleanup;
 	}
-	for (int i = 0; i < max_iter; i++) {
-		tmat[i] = calloc((size_t)max_iter, sizeof(double));
-		if (tmat[i] == NULL) {
-			fprintf(stderr, "lanczos: allocation failed (tmat[%d], max_iter=%d)\n", i, max_iter);
-			goto cleanup;
-		}
-	}
-	/*
-	 * `diagonalize_double()` only needs eigenvectors of the (k+1)x(k+1)
-	 * tridiagonal matrix T, where (k+1) <= max_iter.
-	 * Allocating mat_dim x mat_dim here is unnecessary and can OOM.
-	 */
-	eigenvectors_work = calloc((size_t)max_iter, sizeof(double *));
+	/* eigenvectors of (k+1)x(k+1) where (k+1)<=max_iter; keep workspace max_iter^2 */
+	eigenvectors_work = calloc(t_elems, sizeof(double));
 	if (eigenvectors_work == NULL) {
-		fprintf(stderr, "lanczos: allocation failed (eigenvectors_work pointers)\n");
+		fprintf(stderr, "lanczos: allocation failed (eigenvectors_work, elems=%zu)\n", t_elems);
 		goto cleanup;
 	}
-	for (int i = 0; i < max_iter; i++) {
-		eigenvectors_work[i] = calloc((size_t)max_iter, sizeof(double));
-		if (eigenvectors_work[i] == NULL) {
-			fprintf(stderr, "lanczos: allocation failed (eigenvectors_work[%d])\n", i);
-			goto cleanup;
-		}
-	}
+
+
+#define V(k, i) v[(size_t)(k) * mat_dim + (size_t)(i)]
+#define T(i, j) tmat[(size_t)(j) * (size_t)ld + (size_t)(i)]
+#define E(i, j) eigenvectors_work[(size_t)(j) * (size_t)ld + (size_t)(i)]
 
 	teval_last = calloc((size_t)nth_eig, sizeof(double));
 	if (teval_last == NULL) {
@@ -92,11 +90,11 @@ void lanczos(const Mat_Matvec mat_matvec,
 	}
 
 	/* 0-based indexing: v[0] is the initial vector */
-	gaussian_random_vec(mat_dim, v[0]);
+	gaussian_random_vec(mat_dim_i, &V(0, 0));
 
-	norm = sqrt(dot_product(v[0], v[0], mat_dim));
-	for (int i = 0; i < mat_dim; i++) {
-		v[0][i] = 1.0 / norm * v[0][i];
+	norm = sqrt(dot_product(&V(0, 0), &V(0, 0), mat_dim_i));
+	for (int i = 0; i < mat_dim_i; i++) {
+		V(0, i) = (1.0 / norm) * V(0, i);
 	}
 
 	double __et = omp_get_wtime();
@@ -109,15 +107,15 @@ void lanczos(const Mat_Matvec mat_matvec,
 			eval_count = nth_eig;
 		}
 		MEASURE_ACC(time_matvec,
-		matvec(mat, v[k], v[k + 1]);
+		matvec(mat, &V(k, 0), &V(k + 1, 0));
 		);
-		alpha = dot_product(v[k], v[k + 1], mat_dim);
-		tmat[k][k] = alpha;
+		alpha = dot_product(&V(k, 0), &V(k + 1, 0), mat_dim_i);
+		T(k, k) = alpha;
 		for (int i = 0; i < nth_eig; i++) {
 			teval_last[i] = eigenvalues[i];
 		}
 		MEASURE_ACC(time_diag,
-		diagonalize_double(tmat, eigenvalues, eigenvectors_work, k + 1);
+		diagonalize_double(tmat, ld, eigenvalues, eigenvectors_work, k + 1);
 		);
 		bool all = true;
 		for (int i = eval_count; i < nth_eig; i++) {
@@ -145,29 +143,29 @@ void lanczos(const Mat_Matvec mat_matvec,
 		double __st_reorth = omp_get_wtime();
 		#pragma omp parallel for
 		for (size_t i = 0; i < mat_dim; i++) {
-			double prev = (k == 0) ? 0.0 : v[k - 1][i];
-			v[k + 1][i] = v[k + 1][i] - beta * prev - alpha * v[k][i];
+			double prev = (k == 0) ? 0.0 : V(k - 1, i);
+			V(k + 1, i) = V(k + 1, i) - beta * prev - alpha * V(k, i);
 		}
 		for (int l = 0; l < k; l++) { /* reorthogonalize to all previous basis */
-			double coeff = dot_product(v[l], v[k + 1], mat_dim);
+			double coeff = dot_product(&V(l, 0), &V(k + 1, 0), mat_dim_i);
 			#pragma omp parallel for
-			for (int i = 0; i < mat_dim; i++) {
-				v[k + 1][i] -= v[l][i] * coeff;
+			for (int i = 0; i < mat_dim_i; i++) {
+				V(k + 1, i) -= V(l, i) * coeff;
 			}
 		}
 		double __et_reorth = omp_get_wtime();
 		time_reorth += __et_reorth - __st_reorth;
-		beta = sqrt(dot_product(v[k + 1], v[k + 1], mat_dim));
+		beta = sqrt(dot_product(&V(k + 1, 0), &V(k + 1, 0), mat_dim_i));
 		if (beta * beta < threshold * threshold * threshold * threshold) {
 			printf("%.7f beta converged\n", beta);
 			goto cleanup;
 		}
 		#pragma omp parallel for
 		for (size_t i = 0; i < mat_dim; i++) {
-			v[k + 1][i] /= beta;
+			V(k + 1, i) /= beta;
 		}
-		tmat[k][k + 1] = beta;
-		tmat[k + 1][k] = beta;
+		T(k, k + 1) = beta;
+		T(k + 1, k) = beta;
 	}
 
 cleanup:
@@ -175,21 +173,12 @@ cleanup:
 		free(teval_last);
 	}
 	if (eigenvectors_work != NULL) {
-		for (int i = 0; i < max_iter; i++) {
-			free(eigenvectors_work[i]);
-		}
 		free(eigenvectors_work);
 	}
 	if (tmat != NULL) {
-		for (int i = 0; i < max_iter; i++) {
-			free(tmat[i]);
-		}
 		free(tmat);
 	}
 	if (v != NULL) {
-		for (int i = 0; i < max_iter; i++) {
-			free(v[i]);
-		}
 		free(v);
 	}
 	fprintf(stderr, "Time spent in init:      %.6f sec\n", time_init);

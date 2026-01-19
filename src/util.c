@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string.h>
 #include <time.h>
 #include <mkl_lapacke.h>
 #include "util.h"
@@ -61,20 +62,30 @@ double dot_product(const double *a, const double *b, int size) {
   return sum;
 }
 
-void diagonalize_double(double **symmetric_matrix, double *eigenvalues, double **eigenvectors, int n) {
-  double *u_flat = calloc(n * n, sizeof(double));
+void diagonalize_double(const double *symmetric_matrix, int ld,
+						  double *eigenvalues, double *eigenvectors, int n) {
+	if (symmetric_matrix == NULL || eigenvalues == NULL || eigenvectors == NULL) {
+		fprintf(stderr, "diagonalize_double: NULL argument\n");
+		exit(1);
+	}
+	if (n <= 0 || ld < n) {
+		fprintf(stderr, "diagonalize_double: invalid dimensions (n=%d, ld=%d)\n", n, ld);
+		exit(1);
+	}
+
+	double *u_flat = calloc((size_t)n * (size_t)n, sizeof(double));
   
   if (u_flat == NULL) {
     fprintf(stderr, "Memory allocation failed.\n");
     exit(1);
   }
 
-  // Use column-major here to match the CUDA path (cuSOLVER expects column-major)
-  // and to keep the eigenvector convention as "columns are eigenvectors".
-  for (int i = 0; i < n; i++) {
-    for (int j = 0; j < n; j++) {
-      u_flat[(size_t)j * (size_t)n + (size_t)i] = symmetric_matrix[i][j];
-    }
+  // Copy top-left n x n from column-major symmetric_matrix (ld leading dim)
+  const size_t col_bytes_in = (size_t)n * sizeof(double);
+  for (int j = 0; j < n; j++) {
+    const double *src_col = symmetric_matrix + (size_t)j * (size_t)ld;
+    double *dst_col = u_flat + (size_t)j * (size_t)n;
+    memcpy(dst_col, src_col, col_bytes_in);
   }
   
   int info = LAPACKE_dsyev(LAPACK_COL_MAJOR, 'V', 'U', n, u_flat, n, eigenvalues);
@@ -93,10 +104,12 @@ void diagonalize_double(double **symmetric_matrix, double *eigenvalues, double *
     }
   }
 
-  for (int i = 0; i < n; i++) {
-    for (int j = 0; j < n; j++) {
-      eigenvectors[i][j] = u_flat[(size_t)j * (size_t)n + (size_t)i];
-    }
+  // Write eigenvectors into column-major output with leading dimension ld
+  const size_t col_bytes_out = (size_t)n * sizeof(double);
+  for (int j = 0; j < n; j++) {
+    memcpy(eigenvectors + (size_t)j * (size_t)ld,
+           u_flat + (size_t)j * (size_t)n,
+           col_bytes_out);
   }
     
   free(u_flat);
