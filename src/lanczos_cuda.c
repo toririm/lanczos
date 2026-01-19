@@ -362,6 +362,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 			teval_last[i] = eigenvalues[i];
 		}
 
+		MEASURE_ACC(time_memcpy,
 		int current_dim = k + 1;
 		size_t copy_cols = (size_t)current_dim;
 		CHECK_CUDA_GOTO(cudaMemcpy(d_T,
@@ -369,6 +370,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 								   (size_t)ld * copy_cols * sizeof(double),
 								   cudaMemcpyHostToDevice),
 						cleanup);
+		);
 
 		// T_(k,k) の固有値と固有ベクトルを計算している
 		MEASURE_ACC(time_diag,
