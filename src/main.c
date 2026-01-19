@@ -9,7 +9,6 @@
 #include "lanczos.h"
 #include "lanczos_cuda.h"
 
-#define number_of_eigenvalues 5
 #define buf_size 1000
 
 int main(int argc, const char *argv[]) {
@@ -19,11 +18,12 @@ int main(int argc, const char *argv[]) {
 	Mat_Crs mat_crs;
 	double eigenvalues[buf_size];
 	double *eigenvectors[buf_size];
+	int number_of_eigenvalues;
 
 	printf("Using %d threads\n", omp_get_max_threads());
 
-	if (argc != 3) {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda>\n", argv[0]);
+	if (argc != 4) {
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda> <number_of_eigenvalues>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 	filename = argv[1];
@@ -34,9 +34,11 @@ int main(int argc, const char *argv[]) {
 	} else if (strcmp(argv[2], "crs_cuda") == 0) {
 		mat_type = CRS_CUDA;
 	} else {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda> <number_of_eigenvalues>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
+
+	number_of_eigenvalues = atoi(argv[3]);
 
 	MEASURE(read_mat,
 		mat = read_mat_coo_incremental(filename);
