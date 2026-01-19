@@ -22,8 +22,8 @@ int main(int argc, const char *argv[]) {
 
 	printf("Using %d threads\n", omp_get_max_threads());
 
-	if (argc != 4) {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda> <number_of_eigenvalues>\n", argv[0]);
+	if (argc != 5) {
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda> <number_of_eigenvalues> <max_iter>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 	filename = argv[1];
@@ -34,11 +34,12 @@ int main(int argc, const char *argv[]) {
 	} else if (strcmp(argv[2], "crs_cuda") == 0) {
 		mat_type = CRS_CUDA;
 	} else {
-		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda> <number_of_eigenvalues>\n", argv[0]);
+		fprintf(stderr, "Usage: %s <input_file> <coo|crs|crs_cuda> <number_of_eigenvalues> <max_iter>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
 	number_of_eigenvalues = atoi(argv[3]);
+	int max_iter = atoi(argv[4]);
 
 	MEASURE(read_mat,
 		mat = read_mat_coo_incremental(filename);
@@ -55,7 +56,7 @@ int main(int argc, const char *argv[]) {
 		);
 		free(mat.data);
 		MEASURE(lanczos,
-			lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+			lanczos(MAKE_MAT_MATVEC(&mat_crs), eigenvalues, eigenvectors, number_of_eigenvalues, max_iter, 10e-5);
 		);
 	} else if (mat_type == CRS_CUDA) {
 		printf("[MODE] CRS_CUDA selected\n");
@@ -64,12 +65,12 @@ int main(int argc, const char *argv[]) {
 		);
 		free(mat.data);
 		MEASURE(lanczos_cuda_crs,
-			lanczos_cuda_crs(&mat_crs, eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+			lanczos_cuda_crs(&mat_crs, eigenvalues, eigenvectors, number_of_eigenvalues, max_iter, 10e-5);
 		);
 	} else {
 		printf("[MODE] COO selected\n");
 		MEASURE(lanczos,
-			lanczos(MAKE_MAT_MATVEC(&mat), eigenvalues, eigenvectors, number_of_eigenvalues, 100, 10e-5);
+			lanczos(MAKE_MAT_MATVEC(&mat), eigenvalues, eigenvectors, number_of_eigenvalues, max_iter, 10e-5);
 		);
 	}
 

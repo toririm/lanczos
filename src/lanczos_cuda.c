@@ -476,6 +476,8 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 
 	status = EXIT_SUCCESS;
 
+	printf("Reached max iterations (%d)\n", max_iter);
+
 cleanup:
 	if (vecX != NULL) {
 		cusparseDestroyDnVec(vecX);

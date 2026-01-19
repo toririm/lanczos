@@ -176,6 +176,8 @@ void lanczos(const Mat_Matvec mat_matvec,
 		T(k + 1, k) = beta;
 	}
 
+	printf("Reached max iterations (%d)\n", max_iter);
+
 cleanup:
 	if (teval_last != NULL) {
 		free(teval_last);
