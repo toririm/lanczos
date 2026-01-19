@@ -45,6 +45,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 
 	const int ld = max_iter;
 	const int mat_dim_i = (int)mat_dim;
+	double *diag_work = NULL;
 
 	if (mat_dim != 0 && (size_t)max_iter > SIZE_MAX / mat_dim) {
 		fprintf(stderr, "lanczos: allocation size overflow (v)\n");
@@ -72,6 +73,13 @@ void lanczos(const Mat_Matvec mat_matvec,
 	eigenvectors_work = calloc(t_elems, sizeof(double));
 	if (eigenvectors_work == NULL) {
 		fprintf(stderr, "lanczos: allocation failed (eigenvectors_work, elems=%zu)\n", t_elems);
+		goto cleanup;
+	}
+
+	/* workspace for diagonalize_double_ws: reuse to avoid alloc/free per iteration */
+	diag_work = (double *)malloc(t_elems * sizeof(double));
+	if (diag_work == NULL) {
+		fprintf(stderr, "lanczos: allocation failed (diag_work, elems=%zu)\n", t_elems);
 		goto cleanup;
 	}
 
@@ -115,7 +123,7 @@ void lanczos(const Mat_Matvec mat_matvec,
 			teval_last[i] = eigenvalues[i];
 		}
 		MEASURE_ACC(time_diag,
-		diagonalize_double(tmat, ld, eigenvalues, eigenvectors_work, k + 1);
+		diagonalize_double(tmat, ld, eigenvalues, eigenvectors_work, k + 1, diag_work);
 		);
 		bool all = true;
 		for (int i = eval_count; i < nth_eig; i++) {
@@ -171,6 +179,9 @@ void lanczos(const Mat_Matvec mat_matvec,
 cleanup:
 	if (teval_last != NULL) {
 		free(teval_last);
+	}
+	if (diag_work != NULL) {
+		free(diag_work);
 	}
 	if (eigenvectors_work != NULL) {
 		free(eigenvectors_work);

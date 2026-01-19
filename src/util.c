@@ -63,22 +63,18 @@ double dot_product(const double *a, const double *b, int size) {
 }
 
 void diagonalize_double(const double *symmetric_matrix, int ld,
-						  double *eigenvalues, double *eigenvectors, int n) {
-	if (symmetric_matrix == NULL || eigenvalues == NULL || eigenvectors == NULL) {
-		fprintf(stderr, "diagonalize_double: NULL argument\n");
-		exit(1);
-	}
-	if (n <= 0 || ld < n) {
-		fprintf(stderr, "diagonalize_double: invalid dimensions (n=%d, ld=%d)\n", n, ld);
-		exit(1);
-	}
-
-	double *u_flat = calloc((size_t)n * (size_t)n, sizeof(double));
-  
-  if (u_flat == NULL) {
-    fprintf(stderr, "Memory allocation failed.\n");
+              double *eigenvalues, double *eigenvectors, int n,
+              double *work_nxn) {
+  if (symmetric_matrix == NULL || eigenvalues == NULL || eigenvectors == NULL || work_nxn == NULL) {
+    fprintf(stderr, "diagonalize_double_ws: NULL argument\n");
     exit(1);
   }
+  if (n <= 0 || ld < n) {
+    fprintf(stderr, "diagonalize_double_ws: invalid dimensions (n=%d, ld=%d)\n", n, ld);
+    exit(1);
+  }
+
+  double *u_flat = work_nxn;
 
   // Copy top-left n x n from column-major symmetric_matrix (ld leading dim)
   const size_t col_bytes_in = (size_t)n * sizeof(double);
@@ -87,12 +83,10 @@ void diagonalize_double(const double *symmetric_matrix, int ld,
     double *dst_col = u_flat + (size_t)j * (size_t)n;
     memcpy(dst_col, src_col, col_bytes_in);
   }
-  
+
   int info = LAPACKE_dsyev(LAPACK_COL_MAJOR, 'V', 'U', n, u_flat, n, eigenvalues);
-  
   if (info != 0) {
-    fprintf(stderr, "diagonalize error in diagonalize_double. info = %d\n", info);
-  	free(u_flat);
+    fprintf(stderr, "diagonalize error in diagonalize_double_ws. info = %d\n", info);
     exit(1);
   }
 
@@ -111,6 +105,4 @@ void diagonalize_double(const double *symmetric_matrix, int ld,
            u_flat + (size_t)j * (size_t)n,
            col_bytes_out);
   }
-    
-  free(u_flat);
 }
