@@ -149,28 +149,53 @@ void lanczos(const Mat_Matvec mat_matvec,
 		printf("\n");
 
 		double __st_reorth = omp_get_wtime();
-		#pragma omp parallel for
-		for (size_t i = 0; i < mat_dim; i++) {
-			double prev = (k == 0) ? 0.0 : V(k - 1, i);
-			V(k + 1, i) = V(k + 1, i) - beta * prev - alpha * V(k, i);
-		}
-		for (int l = 0; l < k; l++) { /* reorthogonalize to all previous basis */
-			double coeff = dot_product(&V(l, 0), &V(k + 1, 0), mat_dim_i);
-			#pragma omp parallel for
+		/*
+		 * Keep a single OpenMP team for the whole reorthogonalization block.
+		 * Creating a new parallel region inside the inner l-loop is often slower
+		 * than the work itself (especially with large OMP_NUM_THREADS).
+		 */
+		double coeff = 0.0;
+		double beta_sq = 0.0;
+		#pragma omp parallel
+		{
+			#pragma omp for
+			for (size_t i = 0; i < mat_dim; i++) {
+				double prev = (k == 0) ? 0.0 : V(k - 1, i);
+				V(k + 1, i) = V(k + 1, i) - beta * prev - alpha * V(k, i);
+			}
+
+			for (int l = 0; l < k; l++) { /* reorthogonalize to all previous basis */
+				#pragma omp single
+				coeff = 0.0;
+				#pragma omp for simd reduction(+:coeff)
+				for (int i = 0; i < mat_dim_i; i++) {
+					coeff += V(l, i) * V(k + 1, i);
+				}
+				#pragma omp for simd
+				for (int i = 0; i < mat_dim_i; i++) {
+					V(k + 1, i) -= V(l, i) * coeff;
+				}
+			}
+
+			#pragma omp single
+			beta_sq = 0.0;
+			#pragma omp for simd reduction(+:beta_sq)
 			for (int i = 0; i < mat_dim_i; i++) {
-				V(k + 1, i) -= V(l, i) * coeff;
+				beta_sq += V(k + 1, i) * V(k + 1, i);
+			}
+			#pragma omp single
+			beta = sqrt(beta_sq);
+			#pragma omp for simd
+			for (size_t i = 0; i < mat_dim; i++) {
+				V(k + 1, i) /= beta;
 			}
 		}
 		double __et_reorth = omp_get_wtime();
 		time_reorth += __et_reorth - __st_reorth;
-		beta = sqrt(dot_product(&V(k + 1, 0), &V(k + 1, 0), mat_dim_i));
+		/* beta computed inside the parallel region above */
 		if (beta * beta < threshold * threshold * threshold * threshold) {
 			printf("%.7f beta converged\n", beta);
 			goto cleanup;
-		}
-		#pragma omp parallel for
-		for (size_t i = 0; i < mat_dim; i++) {
-			V(k + 1, i) /= beta;
 		}
 		T(k, k + 1) = beta;
 		T(k + 1, k) = beta;

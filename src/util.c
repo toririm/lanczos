@@ -56,6 +56,7 @@ void gaussian_random_vec(int n, double *r) {
 
 double dot_product(const double *a, const double *b, int size) {
   double sum = 0.0;
+  #pragma omp simd reduction(+:sum)
   for (int i = 0; i < size; i++) {
     sum += a[i] * b[i];
   }
@@ -86,12 +87,13 @@ void diagonalize_double(const double *symmetric_matrix, int ld,
 
   int info = LAPACKE_dsyev(LAPACK_COL_MAJOR, 'V', 'U', n, u_flat, n, eigenvalues);
   if (info != 0) {
-    fprintf(stderr, "diagonalize error in diagonalize_double_ws. info = %d\n", info);
+    fprintf(stderr, "diagonalize error in diagonalize_double. info = %d\n", info);
     exit(1);
   }
 
   for (int j = 0; j < n; j++) {
     if (u_flat[(size_t)j * (size_t)n] < 0.0) {
+      #pragma omp simd
       for (int i = 0; i < n; i++) {
         u_flat[(size_t)j * (size_t)n + (size_t)i] *= -1.0;
       }
