@@ -31,3 +31,7 @@ extern double dot_product(const double *a, const double *b, int size);
 extern void diagonalize_double(const double *symmetric_matrix, int ld,
                           double *eigenvalues, double *eigenvectors, int n,
                           double *work_nxn);
+
+extern void diagonalize_double_partial(const double *symmetric_matrix, int ld,
+                          double *eigenvalues, int n, int nth_eig,
+                          double *work_nxn);
