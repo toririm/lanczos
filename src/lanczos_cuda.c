@@ -309,15 +309,26 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_W, (size_t)ld * sizeof(double)), cleanup);
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_info, sizeof(int)), cleanup);
 
+	int meig = 0;
+	const int il = 1;
+	int iu_max = nth_eig;
+
 	int lwork = 0;
-	CHECK_CUSOLVER_GOTO(cusolverDnDsyevd_bufferSize(solver_handle,
-													CUSOLVER_EIG_MODE_VECTOR,
+	CHECK_CUSOLVER_GOTO(cusolverDnDsyevdx_bufferSize(solver_handle,
+													CUSOLVER_EIG_MODE_NOVECTOR,
+													CUSOLVER_EIG_RANGE_I,
 													CUBLAS_FILL_MODE_UPPER,
 													ld,
-													d_T,
+													(const double *)d_T,
 													ld,
-													d_W,
-													&lwork), cleanup);
+													0.0,
+													0.0,
+													il,
+													iu_max,
+													&meig,
+													(const double *)d_W,
+													&lwork),
+										cleanup);
 	if (lwork <= 0) {
 		printf("Invalid workspace size returned from cuSOLVER\n");
 		goto cleanup;
@@ -362,8 +373,16 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 			teval_last[i] = eigenvalues[i];
 		}
 
-		MEASURE_ACC(time_memcpy,
 		int current_dim = k + 1;
+		int iu = nth_eig;
+		if (iu < 1) {
+			iu = 1;
+		}
+		if (iu > current_dim) {
+			iu = current_dim;
+		}
+
+		MEASURE_ACC(time_memcpy,
 		size_t copy_cols = (size_t)current_dim;
 		CHECK_CUDA_GOTO(cudaMemcpy(d_T,
 								   h_T,
@@ -372,14 +391,20 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 						cleanup);
 		);
 
-		// T_(k,k) の固有値と固有ベクトルを計算している
+		// T_(k,k) の固有値のみ（下位 iu 個）を計算している
 		MEASURE_ACC(time_diag,
-		CHECK_CUSOLVER_GOTO(cusolverDnDsyevd(solver_handle,
-											 CUSOLVER_EIG_MODE_VECTOR,
+		CHECK_CUSOLVER_GOTO(cusolverDnDsyevdx(solver_handle,
+											 CUSOLVER_EIG_MODE_NOVECTOR,
+											 CUSOLVER_EIG_RANGE_I,
 											 CUBLAS_FILL_MODE_UPPER,
 											 current_dim,
 											 d_T,
 											 ld,
+											 0.0,
+											 0.0,
+											 il,
+											 iu,
+											 &meig,
 											 d_W,
 											 d_work,
 											 lwork,
@@ -391,13 +416,13 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		int info_host = 0;
 		CHECK_CUDA_GOTO(cudaMemcpy(&info_host, d_info, sizeof(int), cudaMemcpyDeviceToHost), cleanup);
 		if (info_host != 0) {
-			printf("cuSOLVER Dsyevd failed with info = %d\n", info_host);
+			printf("cuSOLVER Dsyevdx failed with info = %d\n", info_host);
 			goto cleanup;
 		}
 		CHECK_CUDA_GOTO(cudaMemcpy(eigenvalues,
-								   d_W,
-								   (size_t)current_dim * sizeof(double),
-								   cudaMemcpyDeviceToHost),
+							   	d_W,
+							   	(size_t)iu * sizeof(double),
+								cudaMemcpyDeviceToHost),
 						cleanup);
 		);
 
