@@ -46,10 +46,10 @@ char *read_from_file(const char *filepath) {
 }
 
 void gaussian_random_vec(int n, double *r) {
-  int iseed[4];
+  lapack_int iseed[4];
   srand((unsigned int)time(NULL));
   for (int i = 0; i < 4; i++) {
-    iseed[i] = rand();
+    iseed[i] = (lapack_int)rand();
   }
 
   LAPACKE_dlarnv(3, iseed, n, r);
