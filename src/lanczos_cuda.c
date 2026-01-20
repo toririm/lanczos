@@ -6,7 +6,6 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <omp.h>
-#include "util.h"
 #include "lanczos_cuda.h"
 
 static inline size_t round_up_even(size_t value) {
@@ -198,7 +197,10 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	double time_init   = 0.0;
 	double time_reorth = 0.0;
 
-	double __st = omp_get_wtime();
+	cudaStream_t stream = NULL;
+	cudaEvent_t ev_start = NULL;
+	cudaEvent_t ev_stop = NULL;
+	double init_start = 0.0;
 
 	if (mat == NULL || eigenvalues == NULL) {
 		return EXIT_FAILURE;
@@ -210,11 +212,6 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 
 	if (max_iter < 2) {
 		printf("max_iter must be >= 2\n");
-		return EXIT_FAILURE;
-	}
-
-	CuSparseMatrix matA;
-	if (create_cusparse_matrix(mat, &matA) != EXIT_SUCCESS) {
 		return EXIT_FAILURE;
 	}
 
@@ -235,17 +232,25 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	int *d_info = NULL;
 	void *d_buffer = NULL;
 	double *d_random = NULL;
+	CuSparseMatrix matA;
+	memset(&matA, 0, sizeof(matA));
 
 	double *h_T = NULL;
+	int *h_info_pinned = NULL;
+	double *h_eig_pinned = NULL;
 	double *teval_last = NULL;
 
 	const int ld = max_iter;
 	size_t matrix_bytes = (size_t)ld * (size_t)ld * sizeof(double);
-	size_t eigvec_bytes = matrix_bytes;
 
 	double threshold_sq = threshold * threshold;
 
 	memset(eigenvalues, 0, (size_t)nth_eig * sizeof(double));
+
+	init_start = omp_get_wtime();
+	CHECK_CUDA_GOTO(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cleanup);
+	CHECK_CUDA_GOTO(cudaEventCreate(&ev_start), cleanup);
+	CHECK_CUDA_GOTO(cudaEventCreate(&ev_stop), cleanup);
 
 	teval_last = (double*) calloc((size_t)nth_eig, sizeof(double));
 	if (teval_last == NULL) {
@@ -253,11 +258,13 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		goto cleanup;
 	}
 
-	h_T = (double*) calloc((size_t)ld * (size_t)ld, sizeof(double));
-	if (h_T == NULL) {
-		printf("Failed to allocate host tridiagonal buffer\n");
-		goto cleanup;
-	}
+	CHECK_CUDA_GOTO(cudaHostAlloc((void**)&h_T, (size_t)ld * (size_t)ld * sizeof(double), cudaHostAllocDefault), cleanup);
+	memset(h_T, 0, (size_t)ld * (size_t)ld * sizeof(double));
+
+	CHECK_CUDA_GOTO(cudaHostAlloc((void**)&h_info_pinned, sizeof(int), cudaHostAllocDefault), cleanup);
+	*h_info_pinned = 0;
+	CHECK_CUDA_GOTO(cudaHostAlloc((void**)&h_eig_pinned, (size_t)nth_eig * sizeof(double), cudaHostAllocDefault), cleanup);
+	memset(h_eig_pinned, 0, (size_t)nth_eig * sizeof(double));
 
 	CHECK_CUSPARSE_GOTO(cusparseCreate(&sp_handle), cleanup);
 	CHECK_CUBLAS_GOTO(cublasCreate(&blas_handle), cleanup);
@@ -265,15 +272,31 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CURAND_GOTO(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT), cleanup);
 	CHECK_CURAND_GOTO(curandSetPseudoRandomGeneratorSeed(rng, 123456789ULL), cleanup);
 
+	CHECK_CUSPARSE_GOTO(cusparseSetStream(sp_handle, stream), cleanup);
+	CHECK_CUBLAS_GOTO(cublasSetStream(blas_handle, stream), cleanup);
+	CHECK_CUSOLVER_GOTO(cusolverDnSetStream(solver_handle, stream), cleanup);
+	CHECK_CURAND_GOTO(curandSetStream(rng, stream), cleanup);
+
+#define MEASURE_EVENT_ACC(time_var, code) \
+	do { \
+		CHECK_CUDA_GOTO(cudaEventRecord(ev_start, stream), cleanup); \
+		code; \
+		CHECK_CUDA_GOTO(cudaEventRecord(ev_stop, stream), cleanup); \
+		CHECK_CUDA_GOTO(cudaEventSynchronize(ev_stop), cleanup); \
+		float ms__ = 0.0f; \
+		CHECK_CUDA_GOTO(cudaEventElapsedTime(&ms__, ev_start, ev_stop), cleanup); \
+		time_var += (double)ms__ * 1.0e-3; \
+	} while (0)
+
 	const size_t total_vec_elems = vec_stride * (size_t)max_iter;
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_V, total_vec_elems * sizeof(double)), cleanup);
-	CHECK_CUDA_GOTO(cudaMemset(d_V, 0, total_vec_elems * sizeof(double)), cleanup);
+	CHECK_CUDA_GOTO(cudaMemsetAsync(d_V, 0, total_vec_elems * sizeof(double), stream), cleanup);
 
 	const size_t padded_dim = round_up_even((size_t)mat_dim);
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_random, padded_dim * sizeof(double)), cleanup);
 
 	CHECK_CURAND_GOTO(curandGenerateNormalDouble(rng, d_random, padded_dim, 0.0, 1.0), cleanup);
-	CHECK_CUDA_GOTO(cudaMemcpy(d_V, d_random, (size_t)mat_dim * sizeof(double), cudaMemcpyDeviceToDevice), cleanup);
+	CHECK_CUDA_GOTO(cudaMemcpyAsync(d_V, d_random, (size_t)mat_dim * sizeof(double), cudaMemcpyDeviceToDevice, stream), cleanup);
 
 	double norm = 0.0;
 	CHECK_CUBLAS_GOTO(cublasDnrm2(blas_handle, mat_dim, d_V, 1, &norm), cleanup);
@@ -286,6 +309,10 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 
 	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecX, mat_dim, d_V, CUDA_R_64F), cleanup);
 	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecY, mat_dim, d_V + vec_stride, CUDA_R_64F), cleanup);
+
+	if (create_cusparse_matrix(mat, &matA) != EXIT_SUCCESS) {
+		goto cleanup;
+	}
 
 	size_t buffer_size = 0;
 	const double alpha_spmv = 1.0;
@@ -335,11 +362,12 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	}
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_work, (size_t)lwork * sizeof(double)), cleanup);
 
+	CHECK_CUDA_GOTO(cudaStreamSynchronize(stream), cleanup);
+	if (init_start != 0.0) {
+		time_init = omp_get_wtime() - init_start;
+	}
+
 	double beta_prev = 0.0;
-
-	double __et = omp_get_wtime();
-
-	time_init = __et - __st;
 
 #define H_T(i, j) h_T[(size_t)(j) * (size_t)ld + (size_t)(i)]
 
@@ -350,10 +378,10 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 
 		CHECK_CUSPARSE_GOTO(cusparseDnVecSetValues(vecX, v_k), cleanup);
 		CHECK_CUSPARSE_GOTO(cusparseDnVecSetValues(vecY, v_next), cleanup);
-		CHECK_CUDA_GOTO(cudaMemset(v_next, 0, vec_stride * sizeof(double)), cleanup);
+		CHECK_CUDA_GOTO(cudaMemsetAsync(v_next, 0, vec_stride * sizeof(double), stream), cleanup);
 
-		MEASURE_ACC(time_matvec,
-		CHECK_CUSPARSE_GOTO(cusparseSpMV(sp_handle,
+		MEASURE_EVENT_ACC(time_matvec,
+			CHECK_CUSPARSE_GOTO(cusparseSpMV(sp_handle,
 										 CUSPARSE_OPERATION_NON_TRANSPOSE,
 										 &alpha_spmv,
 										 matA.descr,
@@ -382,17 +410,18 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 			iu = current_dim;
 		}
 
-		MEASURE_ACC(time_memcpy,
+		MEASURE_EVENT_ACC(time_memcpy,
 		size_t copy_cols = (size_t)current_dim;
-		CHECK_CUDA_GOTO(cudaMemcpy(d_T,
-								   h_T,
-								   (size_t)ld * copy_cols * sizeof(double),
-								   cudaMemcpyHostToDevice),
+		CHECK_CUDA_GOTO(cudaMemcpyAsync(d_T,
+								   		h_T,
+								   		(size_t)ld * copy_cols * sizeof(double),
+							   			cudaMemcpyHostToDevice,
+							   			stream),
 						cleanup);
 		);
 
 		// T_(k,k) の固有値のみ（下位 iu 個）を計算している
-		MEASURE_ACC(time_diag,
+		MEASURE_EVENT_ACC(time_diag,
 		CHECK_CUSOLVER_GOTO(cusolverDnDsyevdx(solver_handle,
 											 CUSOLVER_EIG_MODE_NOVECTOR,
 											 CUSOLVER_EIG_RANGE_I,
@@ -412,19 +441,20 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 							cleanup);
 		);
 
-		MEASURE_ACC(time_memcpy,
-		int info_host = 0;
-		CHECK_CUDA_GOTO(cudaMemcpy(&info_host, d_info, sizeof(int), cudaMemcpyDeviceToHost), cleanup);
-		if (info_host != 0) {
-			printf("cuSOLVER Dsyevdx failed with info = %d\n", info_host);
+		MEASURE_EVENT_ACC(time_memcpy,
+			CHECK_CUDA_GOTO(cudaMemcpyAsync(h_info_pinned, d_info, sizeof(int), cudaMemcpyDeviceToHost, stream), cleanup);
+			CHECK_CUDA_GOTO(cudaMemcpyAsync(h_eig_pinned,
+							   d_W,
+							   (size_t)iu * sizeof(double),
+							   cudaMemcpyDeviceToHost,
+							   stream),
+					cleanup);
+		);
+		if (*h_info_pinned != 0) {
+			printf("cuSOLVER Dsyevdx failed with info = %d\n", *h_info_pinned);
 			goto cleanup;
 		}
-		CHECK_CUDA_GOTO(cudaMemcpy(eigenvalues,
-							   	d_W,
-							   	(size_t)iu * sizeof(double),
-								cudaMemcpyDeviceToHost),
-						cleanup);
-		);
+		memcpy(eigenvalues, h_eig_pinned, (size_t)iu * sizeof(double));
 
 		bool converged = true;
 		if (current_dim < nth_eig) {
@@ -455,25 +485,24 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		}
 		printf("\n");
 
-		double __st_reorth = omp_get_wtime();
 		double neg_alpha = -alpha;
-		CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_alpha, v_k, 1, v_next, 1), cleanup);
-		if (k > 0) {
-			double neg_beta_prev = -beta_prev;
-			CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_beta_prev, v_prev, 1, v_next, 1), cleanup);
-		}
-
-		if (k > 2) {
-			for (int j = 0; j < k - 2; j++) {
-				double *v_j = d_V + (size_t)j * vec_stride;
-				double coeff = 0.0;
-				CHECK_CUBLAS_GOTO(cublasDdot(blas_handle, mat_dim, v_j, 1, v_next, 1, &coeff), cleanup);
-				double neg_coeff = -coeff;
-				CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_coeff, v_j, 1, v_next, 1), cleanup);
+		MEASURE_EVENT_ACC(time_reorth,
+			CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_alpha, v_k, 1, v_next, 1), cleanup);
+			if (k > 0) {
+				double neg_beta_prev = -beta_prev;
+				CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_beta_prev, v_prev, 1, v_next, 1), cleanup);
 			}
-		}
-		double __et_reorth = omp_get_wtime();
-		time_reorth += __et_reorth - __st_reorth;
+
+			if (k > 2) {
+				for (int j = 0; j < k - 2; j++) {
+					double *v_j = d_V + (size_t)j * vec_stride;
+					double coeff = 0.0;
+					CHECK_CUBLAS_GOTO(cublasDdot(blas_handle, mat_dim, v_j, 1, v_next, 1, &coeff), cleanup);
+					double neg_coeff = -coeff;
+					CHECK_CUBLAS_GOTO(cublasDaxpy(blas_handle, mat_dim, &neg_coeff, v_j, 1, v_next, 1), cleanup);
+				}
+			}
+		);
 
 		double beta_next = 0.0;
 		CHECK_CUBLAS_GOTO(cublasDnrm2(blas_handle, mat_dim, v_next, 1, &beta_next), cleanup);
@@ -506,6 +535,15 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	printf("Reached max iterations (%d)\n", max_iter);
 
 cleanup:
+	if (ev_start != NULL) {
+		cudaEventDestroy(ev_start);
+	}
+	if (ev_stop != NULL) {
+		cudaEventDestroy(ev_stop);
+	}
+	if (stream != NULL) {
+		cudaStreamDestroy(stream);
+	}
 	if (vecX != NULL) {
 		cusparseDestroyDnVec(vecX);
 	}
@@ -545,10 +583,19 @@ cleanup:
 	if (d_random != NULL) {
 		cudaFree(d_random);
 	}
-	free(h_T);
+	if (h_T != NULL) {
+		cudaFreeHost(h_T);
+	}
+	if (h_info_pinned != NULL) {
+		cudaFreeHost(h_info_pinned);
+	}
+	if (h_eig_pinned != NULL) {
+		cudaFreeHost(h_eig_pinned);
+	}
 	free(teval_last);
 	destroy_cusparse_matrix(&matA);
 #undef H_T
+	#undef MEASURE_EVENT_ACC
 	fprintf(stderr, "Time spent in init:      %.6f sec\n", time_init);
 	fprintf(stderr, "Time spent in cudaMemcpy: %.6f sec\n", time_memcpy);
 	fprintf(stderr, "Time spent in SpMV:      %.6f sec\n", time_matvec);
