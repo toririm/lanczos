@@ -241,16 +241,17 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist, cudaStream_
 		return EXIT_FAILURE;
 	}
 
-	/* Profile print (stderr) */
-	fprintf(stderr, "[CSR PROFILE] dim=%d nnz=%zu bytes(row=%zu col=%zu val=%zu)\n",
+	/* Profile print (stderr): single-line key=value for easier parsing */
+	fprintf(stderr,
+			"[CSR] rows=%d nnz=%zu bytes_row=%zu bytes_col=%zu bytes_val=%zu\n",
 			dist->rows, dist->nnz, bytes_row_offsets, bytes_columns, bytes_values);
-	fprintf(stderr, "[CSR PROFILE] device alloc: %.6f sec\n", prof_dev_alloc);
-	fprintf(stderr, "[CSR PROFILE] H2D row_offsets: %.6f sec\n", prof_h2d_row);
-	fprintf(stderr, "[CSR PROFILE] host register columns: %.6f sec (registered=%d)\n", prof_host_register_col, 1);
-	fprintf(stderr, "[CSR PROFILE] H2D columns: %.6f sec\n", prof_h2d_col);
-	fprintf(stderr, "[CSR PROFILE] host register values: %.6f sec (registered=%d)\n", prof_host_register, profile_values_registered);
-	fprintf(stderr, "[CSR PROFILE] H2D values: %.6f sec\n", prof_h2d_val);
-	fprintf(stderr, "[CSR PROFILE] cusparseCreateCsr: %.6f sec\n", prof_descr_create);
+	fprintf(stderr, "[CSR] name=device_alloc sec=%.6f\n", prof_dev_alloc);
+	fprintf(stderr, "[CSR] name=h2d_row_offsets sec=%.6f\n", prof_h2d_row);
+	fprintf(stderr, "[CSR] name=host_register_columns sec=%.6f registered=%d\n", prof_host_register_col, 1);
+	fprintf(stderr, "[CSR] name=h2d_columns sec=%.6f\n", prof_h2d_col);
+	fprintf(stderr, "[CSR] name=host_register_values sec=%.6f registered=%d\n", prof_host_register, profile_values_registered);
+	fprintf(stderr, "[CSR] name=h2d_values sec=%.6f\n", prof_h2d_val);
+	fprintf(stderr, "[CSR] name=cusparseCreateCsr sec=%.6f\n", prof_descr_create);
 
 	cudaEventDestroy(ev_a);
 	cudaEventDestroy(ev_b);
@@ -532,20 +533,23 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		const size_t bytes_hT = (size_t)ld * (size_t)ld * sizeof(double);
 		const size_t bytes_dT = matrix_bytes;
 		const size_t bytes_dwork = (size_t)lwork * sizeof(double);
-		fprintf(stderr, "[INIT PROFILE] total wall: %.6f sec\n", time_init);
-		fprintf(stderr, "[INIT PROFILE] stream/events create: %.6f sec\n", init_cpu_stream_setup);
-		fprintf(stderr, "[INIT PROFILE] host alloc (pinned+small): %.6f sec\n", init_cpu_host_alloc);
-		fprintf(stderr, "[INIT PROFILE] cudaFree(0) warmup: %.6f sec\n", init_cpu_warmup);
-		fprintf(stderr, "[INIT PROFILE] RNG setup: %.6f sec\n", init_cpu_rng_setup);
-		fprintf(stderr, "[INIT PROFILE] handles+setStream: %.6f sec\n", init_cpu_handles);
-		fprintf(stderr, "[INIT PROFILE] V init (CPU wall %.6f sec, GPU %.6f sec, d_V=%zu bytes)\n",
+		fprintf(stderr, "[INIT] name=total_wall sec=%.6f\n", time_init);
+		fprintf(stderr, "[INIT] name=stream_events_create sec=%.6f\n", init_cpu_stream_setup);
+		fprintf(stderr, "[INIT] name=host_alloc_pinned_small sec=%.6f\n", init_cpu_host_alloc);
+		fprintf(stderr, "[INIT] name=cudaFree0_warmup sec=%.6f\n", init_cpu_warmup);
+		fprintf(stderr, "[INIT] name=rng_setup sec=%.6f\n", init_cpu_rng_setup);
+		fprintf(stderr, "[INIT] name=handles_setStream sec=%.6f\n", init_cpu_handles);
+		fprintf(stderr,
+				"[INIT] name=v_init sec_cpu=%.6f sec_gpu=%.6f bytes_dV=%zu\n",
 				init_cpu_v_init, (double)ms_v_init * 1.0e-3, bytes_dV);
-		fprintf(stderr, "[INIT PROFILE] vec descriptors: %.6f sec\n", init_cpu_vec_desc);
-		fprintf(stderr, "[INIT PROFILE] matrix upload (CPU wall %.6f sec, GPU %.6f sec, row=%zu col=%zu val=%zu bytes, nnz=%zu)\n",
+		fprintf(stderr, "[INIT] name=vec_descriptors sec=%.6f\n", init_cpu_vec_desc);
+		fprintf(stderr,
+				"[INIT] name=matrix_upload sec_cpu=%.6f sec_gpu=%.6f bytes_row=%zu bytes_col=%zu bytes_val=%zu nnz=%zu\n",
 				init_cpu_mat_upload, (double)ms_mat_upload * 1.0e-3,
 				bytes_row_offsets, bytes_cols, bytes_vals, mat->length);
-		fprintf(stderr, "[INIT PROFILE] SpMV prep: %.6f sec (buffer=%zu bytes)\n", init_cpu_spmv_prep, buffer_size);
-		fprintf(stderr, "[INIT PROFILE] solver prep: %.6f sec (h_T=%zu d_T=%zu d_work=%zu bytes, lwork=%d)\n",
+		fprintf(stderr, "[INIT] name=spmv_prep sec=%.6f buffer_bytes=%zu\n", init_cpu_spmv_prep, buffer_size);
+		fprintf(stderr,
+				"[INIT] name=solver_prep sec=%.6f bytes_hT=%zu bytes_dT=%zu bytes_dwork=%zu lwork=%d\n",
 				init_cpu_solver_prep, bytes_hT, bytes_dT, bytes_dwork, lwork);
 	}
 
@@ -778,10 +782,10 @@ cleanup:
 	destroy_cusparse_matrix(&matA);
 #undef H_T
 	#undef MEASURE_EVENT_ACC
-	fprintf(stderr, "Time spent in init:      %.6f sec\n", time_init);
-	fprintf(stderr, "Time spent in cudaMemcpy: %.6f sec\n", time_memcpy);
-	fprintf(stderr, "Time spent in SpMV:      %.6f sec\n", time_matvec);
-	fprintf(stderr, "Time spent in diagonalization: %.6f sec\n", time_diag);
-	fprintf(stderr, "Time spent in reorthogonalization: %.6f sec\n", time_reorth);
+	fprintf(stderr, "[TOTAL] name=init sec=%.6f\n", time_init);
+	fprintf(stderr, "[TOTAL] name=cudaMemcpy sec=%.6f\n", time_memcpy);
+	fprintf(stderr, "[TOTAL] name=spmv sec=%.6f\n", time_matvec);
+	fprintf(stderr, "[TOTAL] name=diagonalization sec=%.6f\n", time_diag);
+	fprintf(stderr, "[TOTAL] name=reorthogonalization sec=%.6f\n", time_reorth);
 	return status;
 }

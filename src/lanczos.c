@@ -205,8 +205,8 @@ cleanup:
 	if (v != NULL) {
 		free(v);
 	}
-	fprintf(stderr, "Time spent in init:      %.6f sec\n", time_init);
-	fprintf(stderr, "Time spent in SpMV:      %.6f sec\n", time_matvec);
-	fprintf(stderr, "Time spent in diagonalization: %.6f sec\n", time_diag);
-	fprintf(stderr, "Time spent in reorthogonalization: %.6f sec\n", time_reorth);
+	fprintf(stderr, "[TOTAL] name=init sec=%.6f\n", time_init);
+	fprintf(stderr, "[TOTAL] name=spmv sec=%.6f\n", time_matvec);
+	fprintf(stderr, "[TOTAL] name=diagonalization sec=%.6f\n", time_diag);
+	fprintf(stderr, "[TOTAL] name=reorthogonalization sec=%.6f\n", time_reorth);
 }
