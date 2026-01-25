@@ -294,7 +294,6 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	double init_cpu_spmv_prep = 0.0;
 	double init_cpu_solver_prep = 0.0;
 	double init_cpu_rng_setup = 0.0;
-	double init_cpu_warmup = 0.0;
 
 	cudaEvent_t ev_v_init_start = NULL;
 	cudaEvent_t ev_v_init_stop = NULL;
@@ -358,13 +357,6 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	double threshold_sq = threshold * threshold;
 
 	memset(eigenvalues, 0, (size_t)nth_eig * sizeof(double));
-
-	/* Warm up CUDA context (exclude from init timing/profiling). */
-	init_cpu_t0 = omp_get_wtime();
-	CHECK_CUDA_GOTO(cudaFree(0), cleanup);
-	init_cpu_t1 = omp_get_wtime();
-	init_cpu_warmup = init_cpu_t1 - init_cpu_t0;
-	fprintf(stderr, "[INIT] name=cudaFree0_warmup sec=%.6f\n", init_cpu_warmup);
 
 	init_start = omp_get_wtime();
 
