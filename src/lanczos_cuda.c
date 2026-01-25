@@ -12,12 +12,44 @@ static inline size_t round_up_even(size_t value) {
 	return (value % 2 == 0) ? value : value + 1;
 }
 
-int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
+typedef struct {
+	const void *registered_values;
+	size_t registered_values_bytes;
+	int values_registered;
+} HostCleanup;
+
+static void host_cleanup_fn(void *data) {
+	HostCleanup *cleanup = (HostCleanup*)data;
+	if (cleanup == NULL) {
+		return;
+	}
+	if (cleanup->values_registered && cleanup->registered_values != NULL) {
+		cudaHostUnregister((void*)cleanup->registered_values);
+	}
+	free(cleanup);
+}
+
+int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist, cudaStream_t stream) {
 	if (src == NULL || dist == NULL) {
 		return EXIT_FAILURE;
 	}
 
 	memset(dist, 0, sizeof(*dist));
+
+	double prof_t0 = 0.0;
+	double prof_t1 = 0.0;
+	double prof_host_register_col = 0.0;
+	double prof_dev_alloc = 0.0;
+	double prof_h2d_row = 0.0;
+	double prof_h2d_col = 0.0;
+	double prof_h2d_val = 0.0;
+	double prof_host_register = 0.0;
+	double prof_descr_create = 0.0;
+
+	cudaEvent_t ev_a = NULL;
+	cudaEvent_t ev_b = NULL;
+	float ms_tmp = 0.0f;
+	int profile_values_registered = 0;
 
 	if (src->dimension > (size_t)INT_MAX) {
 		printf("Matrix dimension too large for CUDA path (dim=%zu)\n", src->dimension);
@@ -32,137 +64,196 @@ int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist) {
 	dist->cols = (int)src->dimension;
 	dist->nnz  = src->length;
 
-	int64_t *h_row_offsets = NULL;
-	int64_t *h_columns = NULL;
-
-	h_row_offsets = (int64_t*)malloc((size_t)(dist->rows + 1) * sizeof(int64_t));
-	h_columns = (int64_t*)malloc(dist->nnz * sizeof(int64_t));
-	if (h_row_offsets == NULL || (dist->nnz > 0 && h_columns == NULL)) {
-		printf("Failed to allocate host CSR buffers\n");
-		free(h_row_offsets);
-		free(h_columns);
-		return EXIT_FAILURE;
-	}
-
-	for (int i = 0; i <= dist->rows; i++) {
-		size_t v = src->row_head_indexes[(size_t)i];
-		if (v > (size_t)INT64_MAX) {
-			printf("CSR row offset out of int64 range at i=%d (value=%zu)\n", i, v);
-			free(h_row_offsets);
-			free(h_columns);
-			return EXIT_FAILURE;
-		}
-		h_row_offsets[i] = (int64_t)v;
-	}
-	for (size_t j = 0; j < dist->nnz; j++) {
-		size_t c = src->column_index[j];
-		if (c > (size_t)INT64_MAX) {
-			printf("CSR column index out of int64 range at j=%zu (value=%zu)\n", j, c);
-			free(h_row_offsets);
-			free(h_columns);
-			return EXIT_FAILURE;
-		}
-		h_columns[j] = (int64_t)c;
-	}
-	if (h_row_offsets[0] != 0 || h_row_offsets[dist->rows] != (int64_t)dist->nnz) {
-		printf("CSR row offsets look invalid: row0=%" PRId64 " rowN=%" PRId64 " nnz=%zu\n",
-		       h_row_offsets[0], h_row_offsets[dist->rows], dist->nnz);
-		free(h_row_offsets);
-		free(h_columns);
-		return EXIT_FAILURE;
-	}
+	const size_t bytes_row_offsets = (size_t)(dist->rows + 1) * sizeof(int64_t);
+	const size_t bytes_columns = (size_t)dist->nnz * sizeof(int64_t);
+	const size_t bytes_values = (size_t)dist->nnz * sizeof(double);
 
 	cudaError_t cuda_status;
 
+	/* CUDA event timing for H2D copies (accurate, but synchronizes per copy) */
+	cuda_status = cudaEventCreate(&ev_a);
+	if (cuda_status != cudaSuccess) {
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+	cuda_status = cudaEventCreate(&ev_b);
+	if (cuda_status != cudaSuccess) {
+		cudaEventDestroy(ev_a);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	prof_t0 = omp_get_wtime();
 	cuda_status = cudaMalloc((void**) &dist->d_row_offsets,
-						 (size_t)(dist->rows + 1) * sizeof(int64_t));
+							 (size_t)(dist->rows + 1) * sizeof(int64_t));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
-		free(h_row_offsets);
-		free(h_columns);
+		cudaEventDestroy(ev_a);
+		cudaEventDestroy(ev_b);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
 
-	cuda_status = cudaMalloc((void**) &dist->d_columns,
-						 dist->nnz * sizeof(int64_t));
+	cuda_status = cudaMalloc((void**) &dist->d_columns, dist->nnz * sizeof(int64_t));
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
-		free(h_row_offsets);
-		free(h_columns);
+		cudaEventDestroy(ev_a);
+		cudaEventDestroy(ev_b);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+				__LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+
+	cuda_status = cudaMalloc((void**) &dist->d_values, (size_t)dist->nnz * sizeof(double));
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		cudaEventDestroy(ev_a);
+		cudaEventDestroy(ev_b);
+		printf("CUDA API failed at line %d with error: %s (%d)\n",
+				__LINE__, cudaGetErrorString(cuda_status), cuda_status);
+		return EXIT_FAILURE;
+	}
+	prof_t1 = omp_get_wtime();
+	prof_dev_alloc = prof_t1 - prof_t0;
+
+	/* Row offsets H2D */
+	CHECK_CUDA(cudaEventRecord(ev_a, stream));
+
+	cuda_status = cudaMemcpyAsync(dist->d_row_offsets, src->row_head_indexes,
+						  (size_t)(dist->rows + 1) * sizeof(int64_t),
+						  cudaMemcpyHostToDevice,
+						  stream);
+	if (cuda_status != cudaSuccess) {
+		destroy_cusparse_matrix(dist);
+		cudaEventDestroy(ev_a);
+		cudaEventDestroy(ev_b);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
 			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
+	CHECK_CUDA(cudaEventRecord(ev_b, stream));
+	CHECK_CUDA(cudaEventSynchronize(ev_b));
+	CHECK_CUDA(cudaEventElapsedTime(&ms_tmp, ev_a, ev_b));
+	prof_h2d_row = (double)ms_tmp * 1.0e-3;
 
-	cuda_status = cudaMalloc((void**) &dist->d_values,
-							 (size_t)dist->nnz * sizeof(double));
+	int values_registered = 0;
+	prof_t0 = omp_get_wtime();
+	CHECK_CUDA(cudaHostRegister((void*)src->column_index, dist->nnz * sizeof(int64_t), cudaHostRegisterDefault));
+	prof_t1 = omp_get_wtime();
+	prof_host_register_col = prof_t1 - prof_t0;
+	
+	/* Columns H2D */
+	CHECK_CUDA(cudaEventRecord(ev_a, stream));
+	cuda_status = cudaMemcpyAsync(dist->d_columns, src->column_index,
+						dist->nnz * sizeof(int64_t),
+						cudaMemcpyHostToDevice,
+						stream);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
-		free(h_row_offsets);
-		free(h_columns);
+		cudaEventDestroy(ev_a);
+		cudaEventDestroy(ev_b);
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
-			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+				__LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
+	CHECK_CUDA(cudaEventRecord(ev_b, stream));
+	CHECK_CUDA(cudaEventSynchronize(ev_b));
+	CHECK_CUDA(cudaEventElapsedTime(&ms_tmp, ev_a, ev_b));
+	prof_h2d_col = (double)ms_tmp * 1.0e-3;
 
-	cuda_status = cudaMemcpy(dist->d_row_offsets, h_row_offsets,
-						 (size_t)(dist->rows + 1) * sizeof(int64_t),
-							 cudaMemcpyHostToDevice);
+	prof_t0 = omp_get_wtime();
+	cuda_status = cudaHostRegister((void*)src->values, dist->nnz * sizeof(double), cudaHostRegisterDefault);
+	if (cuda_status == cudaSuccess) {
+		values_registered = 1;
+	} else {
+		values_registered = 0;
+	}
+	prof_t1 = omp_get_wtime();
+	prof_host_register = prof_t1 - prof_t0;
+	profile_values_registered = values_registered;
+
+	/* Values H2D */
+	CHECK_CUDA(cudaEventRecord(ev_a, stream));
+	cuda_status = cudaMemcpyAsync(dist->d_values, src->values,
+						dist->nnz * sizeof(double),
+						cudaMemcpyHostToDevice,
+						stream);
 	if (cuda_status != cudaSuccess) {
 		destroy_cusparse_matrix(dist);
-		free(h_row_offsets);
-		free(h_columns);
+		cudaEventDestroy(ev_a);
+		cudaEventDestroy(ev_b);
+		if (values_registered) {
+			cudaHostUnregister((void*)src->values);
+		}
 		printf("CUDA API failed at line %d with error: %s (%d)\n",
-			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
+				__LINE__, cudaGetErrorString(cuda_status), cuda_status);
 		return EXIT_FAILURE;
 	}
+	CHECK_CUDA(cudaEventRecord(ev_b, stream));
+	CHECK_CUDA(cudaEventSynchronize(ev_b));
+	CHECK_CUDA(cudaEventElapsedTime(&ms_tmp, ev_a, ev_b));
+	prof_h2d_val = (double)ms_tmp * 1.0e-3;
 
-	cuda_status = cudaMemcpy(dist->d_columns, h_columns,
-						 dist->nnz * sizeof(int64_t),
-							 cudaMemcpyHostToDevice);
-	if (cuda_status != cudaSuccess) {
-		destroy_cusparse_matrix(dist);
-		free(h_row_offsets);
-		free(h_columns);
-		printf("CUDA API failed at line %d with error: %s (%d)\n",
-			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
-		return EXIT_FAILURE;
-	}
-
-	free(h_row_offsets);
-	free(h_columns);
-
-	cuda_status = cudaMemcpy(dist->d_values, src->values,
-						 dist->nnz * sizeof(double),
-							 cudaMemcpyHostToDevice);
-	if (cuda_status != cudaSuccess) {
-		destroy_cusparse_matrix(dist);
-		printf("CUDA API failed at line %d with error: %s (%d)\n",
-			   __LINE__, cudaGetErrorString(cuda_status), cuda_status);
-		return EXIT_FAILURE;
+	HostCleanup *cleanup = (HostCleanup*)calloc(1, sizeof(*cleanup));
+	if (cleanup == NULL) {
+		/* Fallback: block and free safely */
+		cudaStreamSynchronize(stream);
+		if (values_registered) {
+			cudaHostUnregister((void*)src->values);
+		}
+	} else {
+		cleanup->registered_values = src->values;
+		cleanup->registered_values_bytes = dist->nnz * sizeof(double);
+		cleanup->values_registered = values_registered;
+		cuda_status = cudaLaunchHostFunc(stream, host_cleanup_fn, cleanup);
+		if (cuda_status != cudaSuccess) {
+			/* Fallback: block and free safely */
+			cudaStreamSynchronize(stream);
+			host_cleanup_fn(cleanup);
+		}
 	}
 
 	const int64_t nnz64 = (int64_t)dist->nnz;
 
+	prof_t0 = omp_get_wtime();
 	cusparseStatus_t sparse_status = cusparseCreateCsr(&dist->descr,
-											   (int64_t)dist->rows,
-											   (int64_t)dist->cols,
-											   nnz64,
+											  (int64_t)dist->rows,
+											  (int64_t)dist->cols,
+											   		   nnz64,
 													   dist->d_row_offsets,
 													   dist->d_columns,
 													   dist->d_values,
-											   CUSPARSE_INDEX_64I,
-											   CUSPARSE_INDEX_64I,
+											   		   CUSPARSE_INDEX_64I,
+											   		   CUSPARSE_INDEX_64I,
 													   CUSPARSE_INDEX_BASE_ZERO,
 													   CUDA_R_64F);
+	prof_t1 = omp_get_wtime();
+	prof_descr_create = prof_t1 - prof_t0;
 	if (sparse_status != CUSPARSE_STATUS_SUCCESS) {
 		destroy_cusparse_matrix(dist);
+						cudaEventDestroy(ev_a);
+						cudaEventDestroy(ev_b);
 		printf("CUSPARSE API failed at line %d with error code: %d\n",
 			   __LINE__, sparse_status);
 		return EXIT_FAILURE;
 	}
+
+	/* Profile print (stderr) */
+	fprintf(stderr, "[CSR PROFILE] dim=%d nnz=%zu bytes(row=%zu col=%zu val=%zu)\n",
+			dist->rows, dist->nnz, bytes_row_offsets, bytes_columns, bytes_values);
+	fprintf(stderr, "[CSR PROFILE] device alloc: %.6f sec\n", prof_dev_alloc);
+	fprintf(stderr, "[CSR PROFILE] H2D row_offsets: %.6f sec\n", prof_h2d_row);
+	fprintf(stderr, "[CSR PROFILE] host register columns: %.6f sec (registered=%d)\n", prof_host_register_col, 1);
+	fprintf(stderr, "[CSR PROFILE] H2D columns: %.6f sec\n", prof_h2d_col);
+	fprintf(stderr, "[CSR PROFILE] host register values: %.6f sec (registered=%d)\n", prof_host_register, profile_values_registered);
+	fprintf(stderr, "[CSR PROFILE] H2D values: %.6f sec\n", prof_h2d_val);
+	fprintf(stderr, "[CSR PROFILE] cusparseCreateCsr: %.6f sec\n", prof_descr_create);
+
+	cudaEventDestroy(ev_a);
+	cudaEventDestroy(ev_b);
 
 	return EXIT_SUCCESS;
 }
@@ -190,6 +281,26 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 			  double eigenvalues[], double *eigenvectors[],
 			  int nth_eig, int max_iter, double threshold) {
 	(void)eigenvectors;
+
+	double init_cpu_t0 = 0.0;
+	double init_cpu_t1 = 0.0;
+	double init_cpu_stream_setup = 0.0;
+	double init_cpu_host_alloc = 0.0;
+	double init_cpu_handles = 0.0;
+	double init_cpu_v_init = 0.0;
+	double init_cpu_vec_desc = 0.0;
+	double init_cpu_mat_upload = 0.0;
+	double init_cpu_spmv_prep = 0.0;
+	double init_cpu_solver_prep = 0.0;
+	double init_cpu_rng_setup = 0.0;
+	double init_cpu_warmup = 0.0;
+
+	cudaEvent_t ev_v_init_start = NULL;
+	cudaEvent_t ev_v_init_stop = NULL;
+	cudaEvent_t ev_mat_upload_start = NULL;
+	cudaEvent_t ev_mat_upload_stop = NULL;
+	float ms_v_init = 0.0f;
+	float ms_mat_upload = 0.0f;
 
 	double time_memcpy = 0.0;
 	double time_matvec = 0.0;
@@ -248,10 +359,24 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	memset(eigenvalues, 0, (size_t)nth_eig * sizeof(double));
 
 	init_start = omp_get_wtime();
+	/* Warm up CUDA context (exclude from init timing/profiling). */
+	init_cpu_t0 = omp_get_wtime();
+	CHECK_CUDA_GOTO(cudaFree(0), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_warmup = init_cpu_t1 - init_cpu_t0;
+
+	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUDA_GOTO(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cleanup);
 	CHECK_CUDA_GOTO(cudaEventCreate(&ev_start), cleanup);
 	CHECK_CUDA_GOTO(cudaEventCreate(&ev_stop), cleanup);
+	CHECK_CUDA_GOTO(cudaEventCreate(&ev_v_init_start), cleanup);
+	CHECK_CUDA_GOTO(cudaEventCreate(&ev_v_init_stop), cleanup);
+	CHECK_CUDA_GOTO(cudaEventCreate(&ev_mat_upload_start), cleanup);
+	CHECK_CUDA_GOTO(cudaEventCreate(&ev_mat_upload_stop), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_stream_setup = init_cpu_t1 - init_cpu_t0;
 
+	init_cpu_t0 = omp_get_wtime();
 	teval_last = (double*) calloc((size_t)nth_eig, sizeof(double));
 	if (teval_last == NULL) {
 		printf("Failed to allocate teval_last\n");
@@ -265,17 +390,25 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	*h_info_pinned = 0;
 	CHECK_CUDA_GOTO(cudaHostAlloc((void**)&h_eig_pinned, (size_t)nth_eig * sizeof(double), cudaHostAllocDefault), cleanup);
 	memset(h_eig_pinned, 0, (size_t)nth_eig * sizeof(double));
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_host_alloc = init_cpu_t1 - init_cpu_t0;
 
+	init_cpu_t0 = omp_get_wtime();
+	CHECK_CURAND_GOTO(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT), cleanup);
+	CHECK_CURAND_GOTO(curandSetPseudoRandomGeneratorSeed(rng, 123456789ULL), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_rng_setup = init_cpu_t1 - init_cpu_t0;
+
+	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUSPARSE_GOTO(cusparseCreate(&sp_handle), cleanup);
 	CHECK_CUBLAS_GOTO(cublasCreate(&blas_handle), cleanup);
 	CHECK_CUSOLVER_GOTO(cusolverDnCreate(&solver_handle), cleanup);
-	CHECK_CURAND_GOTO(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT), cleanup);
-	CHECK_CURAND_GOTO(curandSetPseudoRandomGeneratorSeed(rng, 123456789ULL), cleanup);
-
 	CHECK_CUSPARSE_GOTO(cusparseSetStream(sp_handle, stream), cleanup);
 	CHECK_CUBLAS_GOTO(cublasSetStream(blas_handle, stream), cleanup);
 	CHECK_CUSOLVER_GOTO(cusolverDnSetStream(solver_handle, stream), cleanup);
 	CHECK_CURAND_GOTO(curandSetStream(rng, stream), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_handles = init_cpu_t1 - init_cpu_t0;
 
 #define MEASURE_EVENT_ACC(time_var, code) \
 	do { \
@@ -288,8 +421,10 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		time_var += (double)ms__ * 1.0e-3; \
 	} while (0)
 
+	init_cpu_t0 = omp_get_wtime();
 	const size_t total_vec_elems = vec_stride * (size_t)max_iter;
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_V, total_vec_elems * sizeof(double)), cleanup);
+	CHECK_CUDA_GOTO(cudaEventRecord(ev_v_init_start, stream), cleanup);
 	CHECK_CUDA_GOTO(cudaMemsetAsync(d_V, 0, total_vec_elems * sizeof(double), stream), cleanup);
 
 	const size_t padded_dim = round_up_even((size_t)mat_dim);
@@ -306,14 +441,26 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	}
 	double inv_norm = 1.0 / norm;
 	CHECK_CUBLAS_GOTO(cublasDscal(blas_handle, mat_dim, &inv_norm, d_V, 1), cleanup);
+	CHECK_CUDA_GOTO(cudaEventRecord(ev_v_init_stop, stream), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_v_init = init_cpu_t1 - init_cpu_t0;
 
+	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecX, mat_dim, d_V, CUDA_R_64F), cleanup);
 	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecY, mat_dim, d_V + vec_stride, CUDA_R_64F), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_vec_desc = init_cpu_t1 - init_cpu_t0;
 
-	if (create_cusparse_matrix(mat, &matA) != EXIT_SUCCESS) {
+	init_cpu_t0 = omp_get_wtime();
+	CHECK_CUDA_GOTO(cudaEventRecord(ev_mat_upload_start, stream), cleanup);
+	if (create_cusparse_matrix(mat, &matA, stream) != EXIT_SUCCESS) {
 		goto cleanup;
 	}
+	CHECK_CUDA_GOTO(cudaEventRecord(ev_mat_upload_stop, stream), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_mat_upload = init_cpu_t1 - init_cpu_t0;
 
+	init_cpu_t0 = omp_get_wtime();
 	size_t buffer_size = 0;
 	const double alpha_spmv = 1.0;
 	const double beta_spmv = 0.0;
@@ -331,7 +478,10 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	if (buffer_size > 0) {
 		CHECK_CUDA_GOTO(cudaMalloc(&d_buffer, buffer_size), cleanup);
 	}
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_spmv_prep = init_cpu_t1 - init_cpu_t0;
 
+	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_T, matrix_bytes), cleanup);
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_W, (size_t)ld * sizeof(double)), cleanup);
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_info, sizeof(int)), cleanup);
@@ -361,10 +511,42 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 		goto cleanup;
 	}
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_work, (size_t)lwork * sizeof(double)), cleanup);
+	init_cpu_t1 = omp_get_wtime();
+	init_cpu_solver_prep = init_cpu_t1 - init_cpu_t0;
 
 	CHECK_CUDA_GOTO(cudaStreamSynchronize(stream), cleanup);
+	if (ev_v_init_start != NULL && ev_v_init_stop != NULL) {
+		(void)cudaEventElapsedTime(&ms_v_init, ev_v_init_start, ev_v_init_stop);
+	}
+	if (ev_mat_upload_start != NULL && ev_mat_upload_stop != NULL) {
+		(void)cudaEventElapsedTime(&ms_mat_upload, ev_mat_upload_start, ev_mat_upload_stop);
+	}
 	if (init_start != 0.0) {
 		time_init = omp_get_wtime() - init_start;
+	}
+	{
+		const size_t bytes_dV = (size_t)mat_dim * (size_t)max_iter * sizeof(double);
+		const size_t bytes_row_offsets = (size_t)(mat_dim + 1) * sizeof(int64_t);
+		const size_t bytes_cols = mat->length * sizeof(int64_t);
+		const size_t bytes_vals = mat->length * sizeof(double);
+		const size_t bytes_hT = (size_t)ld * (size_t)ld * sizeof(double);
+		const size_t bytes_dT = matrix_bytes;
+		const size_t bytes_dwork = (size_t)lwork * sizeof(double);
+		fprintf(stderr, "[INIT PROFILE] total wall: %.6f sec\n", time_init);
+		fprintf(stderr, "[INIT PROFILE] stream/events create: %.6f sec\n", init_cpu_stream_setup);
+		fprintf(stderr, "[INIT PROFILE] host alloc (pinned+small): %.6f sec\n", init_cpu_host_alloc);
+		fprintf(stderr, "[INIT PROFILE] cudaFree(0) warmup: %.6f sec\n", init_cpu_warmup);
+		fprintf(stderr, "[INIT PROFILE] RNG setup: %.6f sec\n", init_cpu_rng_setup);
+		fprintf(stderr, "[INIT PROFILE] handles+setStream: %.6f sec\n", init_cpu_handles);
+		fprintf(stderr, "[INIT PROFILE] V init (CPU wall %.6f sec, GPU %.6f sec, d_V=%zu bytes)\n",
+				init_cpu_v_init, (double)ms_v_init * 1.0e-3, bytes_dV);
+		fprintf(stderr, "[INIT PROFILE] vec descriptors: %.6f sec\n", init_cpu_vec_desc);
+		fprintf(stderr, "[INIT PROFILE] matrix upload (CPU wall %.6f sec, GPU %.6f sec, row=%zu col=%zu val=%zu bytes, nnz=%zu)\n",
+				init_cpu_mat_upload, (double)ms_mat_upload * 1.0e-3,
+				bytes_row_offsets, bytes_cols, bytes_vals, mat->length);
+		fprintf(stderr, "[INIT PROFILE] SpMV prep: %.6f sec (buffer=%zu bytes)\n", init_cpu_spmv_prep, buffer_size);
+		fprintf(stderr, "[INIT PROFILE] solver prep: %.6f sec (h_T=%zu d_T=%zu d_work=%zu bytes, lwork=%d)\n",
+				init_cpu_solver_prep, bytes_hT, bytes_dT, bytes_dwork, lwork);
 	}
 
 	double beta_prev = 0.0;

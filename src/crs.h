@@ -3,13 +3,13 @@
 
 typedef struct crs {
     double  *values;
-    size_t     *column_index;
+    int64_t     *column_index;
     /**
      * 各行の最初の非ゼロ要素を value の index で格納
      * 長さは dimension + 1
      * row_head_indexes[dimension] = length
      */
-    size_t     *row_head_indexes;
+    int64_t     *row_head_indexes;
     /**
      * value, column_index の長さ
      */

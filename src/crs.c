@@ -28,14 +28,14 @@ Mat_Crs convert_from_coo(const Mat_Coo *mat_coo, int swap_row_column) {
     }
 
     double *values = NULL;
-    size_t *column_index = NULL;
-    size_t *row_head_indexes = NULL;
+    int64_t *column_index = NULL;
+    int64_t *row_head_indexes = NULL;
     size_t *row_counts = NULL;
     size_t *next = NULL;
 
     if (length > 0) {
         values = (double *)malloc(sizeof(double) * length);
-        column_index = (size_t *)malloc(sizeof(size_t) * length);
+        column_index = (int64_t *)malloc(sizeof(int64_t) * length);
         if (values == NULL || column_index == NULL) {
             fprintf(stderr, "convert_from_coo: malloc failed (length=%zu)\n", length);
             free(values);
@@ -44,7 +44,7 @@ Mat_Crs convert_from_coo(const Mat_Coo *mat_coo, int swap_row_column) {
         }
     }
 
-    row_head_indexes = (size_t *)malloc(sizeof(size_t) * (dimension + 1));
+    row_head_indexes = (int64_t *)malloc(sizeof(int64_t) * (dimension + 1));
     row_counts = (size_t *)calloc(dimension, sizeof(size_t));
     if (row_head_indexes == NULL || row_counts == NULL) {
         fprintf(stderr, "convert_from_coo: allocation failed (dimension=%zu)\n", dimension);
@@ -113,7 +113,7 @@ Mat_Crs convert_from_coo(const Mat_Coo *mat_coo, int swap_row_column) {
         free(row_counts);
         exit(EXIT_FAILURE);
     }
-    memcpy(next, row_head_indexes, sizeof(size_t) * dimension);
+    memcpy(next, row_head_indexes, sizeof(int64_t) * dimension);
 
     for (size_t i = 0; i < length; i++) {
         const Coo *data = &mat_coo->data[i];

@@ -133,7 +133,7 @@ typedef struct {
     size_t nnz;
 } CuSparseMatrix;
 
-extern int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist);
+extern int create_cusparse_matrix(const Mat_Crs *src, CuSparseMatrix *dist, cudaStream_t stream);
 extern void destroy_cusparse_matrix(CuSparseMatrix *mat);
 
 extern int lanczos_cuda_crs(const Mat_Crs *mat,
