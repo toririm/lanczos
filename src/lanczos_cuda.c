@@ -359,12 +359,14 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 
 	memset(eigenvalues, 0, (size_t)nth_eig * sizeof(double));
 
-	init_start = omp_get_wtime();
 	/* Warm up CUDA context (exclude from init timing/profiling). */
 	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUDA_GOTO(cudaFree(0), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_warmup = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=cudaFree0_warmup sec=%.6f\n", init_cpu_warmup);
+
+	init_start = omp_get_wtime();
 
 	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUDA_GOTO(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cleanup);
@@ -376,6 +378,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CUDA_GOTO(cudaEventCreate(&ev_mat_upload_stop), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_stream_setup = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=stream_events_create sec=%.6f\n", init_cpu_stream_setup);
 
 	init_cpu_t0 = omp_get_wtime();
 	teval_last = (double*) calloc((size_t)nth_eig, sizeof(double));
@@ -393,12 +396,14 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	memset(h_eig_pinned, 0, (size_t)nth_eig * sizeof(double));
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_host_alloc = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=host_alloc_pinned_small sec=%.6f\n", init_cpu_host_alloc);
 
 	init_cpu_t0 = omp_get_wtime();
 	CHECK_CURAND_GOTO(curandCreateGenerator(&rng, CURAND_RNG_PSEUDO_DEFAULT), cleanup);
 	CHECK_CURAND_GOTO(curandSetPseudoRandomGeneratorSeed(rng, 123456789ULL), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_rng_setup = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=rng_setup sec=%.6f\n", init_cpu_rng_setup);
 
 	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUSPARSE_GOTO(cusparseCreate(&sp_handle), cleanup);
@@ -410,6 +415,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CURAND_GOTO(curandSetStream(rng, stream), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_handles = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=handles_setStream sec=%.6f\n", init_cpu_handles);
 
 #define MEASURE_EVENT_ACC(time_var, code) \
 	do { \
@@ -445,14 +451,27 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CUDA_GOTO(cudaEventRecord(ev_v_init_stop, stream), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_v_init = init_cpu_t1 - init_cpu_t0;
+	{
+		const size_t bytes_dV = (size_t)mat_dim * (size_t)max_iter * sizeof(double);
+		fprintf(stderr, "[INIT] name=v_init sec_cpu=%.6f bytes_dV=%zu\n", init_cpu_v_init, bytes_dV);
+	}
 
 	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecX, mat_dim, d_V, CUDA_R_64F), cleanup);
 	CHECK_CUSPARSE_GOTO(cusparseCreateDnVec(&vecY, mat_dim, d_V + vec_stride, CUDA_R_64F), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_vec_desc = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=vec_descriptors sec=%.6f\n", init_cpu_vec_desc);
 
 	init_cpu_t0 = omp_get_wtime();
+	{
+		const size_t bytes_row_offsets = (size_t)(mat_dim + 1) * sizeof(int64_t);
+		const size_t bytes_cols = mat->length * sizeof(int64_t);
+		const size_t bytes_vals = mat->length * sizeof(double);
+		fprintf(stderr,
+				"[INIT] name=matrix_upload_begin detail_ref=CSR nnz=%zu bytes_row=%zu bytes_col=%zu bytes_val=%zu\n",
+				mat->length, bytes_row_offsets, bytes_cols, bytes_vals);
+	}
 	CHECK_CUDA_GOTO(cudaEventRecord(ev_mat_upload_start, stream), cleanup);
 	if (create_cusparse_matrix(mat, &matA, stream) != EXIT_SUCCESS) {
 		goto cleanup;
@@ -460,6 +479,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CUDA_GOTO(cudaEventRecord(ev_mat_upload_stop, stream), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_mat_upload = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=matrix_upload_end detail_ref=CSR sec_cpu=%.6f\n", init_cpu_mat_upload);
 
 	init_cpu_t0 = omp_get_wtime();
 	size_t buffer_size = 0;
@@ -481,6 +501,7 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	}
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_spmv_prep = init_cpu_t1 - init_cpu_t0;
+	fprintf(stderr, "[INIT] name=spmv_prep sec=%.6f buffer_bytes=%zu\n", init_cpu_spmv_prep, buffer_size);
 
 	init_cpu_t0 = omp_get_wtime();
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_T, matrix_bytes), cleanup);
@@ -514,6 +535,14 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	CHECK_CUDA_GOTO(cudaMalloc((void**) &d_work, (size_t)lwork * sizeof(double)), cleanup);
 	init_cpu_t1 = omp_get_wtime();
 	init_cpu_solver_prep = init_cpu_t1 - init_cpu_t0;
+	{
+		const size_t bytes_hT = (size_t)ld * (size_t)ld * sizeof(double);
+		const size_t bytes_dT = matrix_bytes;
+		const size_t bytes_dwork = (size_t)lwork * sizeof(double);
+		fprintf(stderr,
+				"[INIT] name=solver_prep sec=%.6f bytes_hT=%zu bytes_dT=%zu bytes_dwork=%zu lwork=%d\n",
+				init_cpu_solver_prep, bytes_hT, bytes_dT, bytes_dwork, lwork);
+	}
 
 	CHECK_CUDA_GOTO(cudaStreamSynchronize(stream), cleanup);
 	if (ev_v_init_start != NULL && ev_v_init_stop != NULL) {
@@ -522,36 +551,12 @@ int lanczos_cuda_crs(const Mat_Crs *mat,
 	if (ev_mat_upload_start != NULL && ev_mat_upload_stop != NULL) {
 		(void)cudaEventElapsedTime(&ms_mat_upload, ev_mat_upload_start, ev_mat_upload_stop);
 	}
+	fprintf(stderr, "[INIT] name=v_init_gpu sec=%.6f\n", (double)ms_v_init * 1.0e-3);
+	fprintf(stderr, "[INIT] name=matrix_upload_gpu detail_ref=CSR sec=%.6f\n", (double)ms_mat_upload * 1.0e-3);
 	if (init_start != 0.0) {
 		time_init = omp_get_wtime() - init_start;
 	}
-	{
-		const size_t bytes_dV = (size_t)mat_dim * (size_t)max_iter * sizeof(double);
-		const size_t bytes_row_offsets = (size_t)(mat_dim + 1) * sizeof(int64_t);
-		const size_t bytes_cols = mat->length * sizeof(int64_t);
-		const size_t bytes_vals = mat->length * sizeof(double);
-		const size_t bytes_hT = (size_t)ld * (size_t)ld * sizeof(double);
-		const size_t bytes_dT = matrix_bytes;
-		const size_t bytes_dwork = (size_t)lwork * sizeof(double);
-		fprintf(stderr, "[INIT] name=total_wall sec=%.6f\n", time_init);
-		fprintf(stderr, "[INIT] name=stream_events_create sec=%.6f\n", init_cpu_stream_setup);
-		fprintf(stderr, "[INIT] name=host_alloc_pinned_small sec=%.6f\n", init_cpu_host_alloc);
-		fprintf(stderr, "[INIT] name=cudaFree0_warmup sec=%.6f\n", init_cpu_warmup);
-		fprintf(stderr, "[INIT] name=rng_setup sec=%.6f\n", init_cpu_rng_setup);
-		fprintf(stderr, "[INIT] name=handles_setStream sec=%.6f\n", init_cpu_handles);
-		fprintf(stderr,
-				"[INIT] name=v_init sec_cpu=%.6f sec_gpu=%.6f bytes_dV=%zu\n",
-				init_cpu_v_init, (double)ms_v_init * 1.0e-3, bytes_dV);
-		fprintf(stderr, "[INIT] name=vec_descriptors sec=%.6f\n", init_cpu_vec_desc);
-		fprintf(stderr,
-				"[INIT] name=matrix_upload sec_cpu=%.6f sec_gpu=%.6f bytes_row=%zu bytes_col=%zu bytes_val=%zu nnz=%zu\n",
-				init_cpu_mat_upload, (double)ms_mat_upload * 1.0e-3,
-				bytes_row_offsets, bytes_cols, bytes_vals, mat->length);
-		fprintf(stderr, "[INIT] name=spmv_prep sec=%.6f buffer_bytes=%zu\n", init_cpu_spmv_prep, buffer_size);
-		fprintf(stderr,
-				"[INIT] name=solver_prep sec=%.6f bytes_hT=%zu bytes_dT=%zu bytes_dwork=%zu lwork=%d\n",
-				init_cpu_solver_prep, bytes_hT, bytes_dT, bytes_dwork, lwork);
-	}
+	fprintf(stderr, "[INIT] name=total_wall sec=%.6f\n", time_init);
 
 	double beta_prev = 0.0;
 
@@ -782,7 +787,7 @@ cleanup:
 	destroy_cusparse_matrix(&matA);
 #undef H_T
 	#undef MEASURE_EVENT_ACC
-	fprintf(stderr, "[TOTAL] name=init sec=%.6f\n", time_init);
+	fprintf(stderr, "[TOTAL] name=init detail_ref=INIT sec=%.6f\n", time_init);
 	fprintf(stderr, "[TOTAL] name=cudaMemcpy sec=%.6f\n", time_memcpy);
 	fprintf(stderr, "[TOTAL] name=spmv sec=%.6f\n", time_matvec);
 	fprintf(stderr, "[TOTAL] name=diagonalization sec=%.6f\n", time_diag);
